@@ -1,0 +1,25 @@
+# Eclipse ESAPI Project
+
+This folder contains the full ARTEMIS Eclipse Scripting API project.
+
+Open `USZ_ARTEMIS.sln` in Visual Studio. The C# namespaces and ESAPI assembly name are preserved from the previous project so clinical behavior stays stable.
+
+## Required Local Files
+
+Varian ESAPI assemblies are proprietary and are not committed to Git. For local builds, place them here:
+
+```text
+eclipse_script/ESAPI 18.1/
+├── VMS.TPS.Common.Model.API.dll
+└── VMS.TPS.Common.Model.Types.dll
+```
+
+NuGet packages are restored into `eclipse_script/packages/`.
+
+Deployment-specific paths are loaded from `AppPaths.local.json`. Start from
+`USZ_ARTEMIS/Configuration/AppPaths.example.json` and keep the local file out of
+Git.
+
+## Build
+
+Use Visual Studio or MSBuild with the `Release|x64` configuration. Build outputs are generated under the project `plugins/` folder and are ignored by Git.

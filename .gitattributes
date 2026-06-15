@@ -1,0 +1,24 @@
+* text=auto
+
+*.py text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.txt text eol=lf
+
+*.cs text eol=crlf
+*.csproj text eol=crlf
+*.sln text eol=crlf
+*.xaml text eol=crlf
+*.config text eol=crlf
+*.xml text eol=crlf
+*.xsd text eol=crlf
+
+*.jpg binary
+*.jpeg binary
+*.png binary
+*.ico binary
+*.dll binary
+*.exe binary
+*.zip binary

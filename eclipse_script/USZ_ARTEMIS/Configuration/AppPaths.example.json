@@ -1,0 +1,8 @@
+{
+  "PublishedScriptIconPath": "\\\\YOUR-SERVER\\YOUR-SHARE\\ARTEMIS\\PublishedScripts\\Images\\usz32.ico",
+  "RulesFolder": "\\\\YOUR-SERVER\\YOUR-SHARE\\ARTEMIS\\Rules\\",
+  "ReportsPdfFolder": "\\\\YOUR-SERVER\\YOUR-SHARE\\ARTEMIS\\ReportsPDF\\",
+  "SciMoCaExecutablePath": "\\\\YOUR-SERVER\\YOUR-SHARE\\ARTEMIS\\Utilities\\SciMoCa\\SciMoCa.exe",
+  "SciMoCaWorkingDirectory": "\\\\YOUR-SERVER\\YOUR-SHARE\\ARTEMIS\\Utilities\\SciMoCa",
+  "RegistrationCheckExecutablePath": "\\\\YOUR-SERVER\\YOUR-SHARE\\ARTEMIS\\Utilities\\RegistrationCheck\\RegistrationCheck.exe"
+}

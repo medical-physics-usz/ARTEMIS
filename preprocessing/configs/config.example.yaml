@@ -1,0 +1,19 @@
+# Documentation-only example of the runtime configuration.
+# The application currently reads `.env`; this file is not loaded by the code.
+
+patient:
+  id: "EXAMPLE_PATIENT_ID"
+  rtplan_label: "EXAMPLE_PLAN"
+  rtplan_uid: "1.2.3.example"
+
+paths:
+  input_dir: "D:/ARTEMIS/input"
+  baseplan_dir: "D:/ARTEMIS/baseplans"
+  registration_log_file: "D:/ARTEMIS/logs/registration_log.csv"
+  registration_log_analysis_file: "D:/ARTEMIS/logs/registration_log_analysis.csv"
+
+dicom_server:
+  server_ae_title: "ARIA_AE"
+  server_ip: "192.0.2.10"
+  server_port: 104
+  scp_port: 11112

@@ -1,0 +1,230 @@
+﻿<UserControl x:Class="USZ_ARTEMIS.StartPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             mc:Ignorable="d"
+             d:DesignHeight="800" d:DesignWidth="1250"
+             SnapsToDevicePixels="True" UseLayoutRounding="True">
+
+    <UserControl.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Height" Value="32"/>
+            <Setter Property="MinWidth" Value="160"/>
+            <Setter Property="HorizontalAlignment" Value="Stretch"/>
+            <Setter Property="Margin" Value="0,0,0,8"/>
+        </Style>
+
+        <Style TargetType="TextBox">
+            <Setter Property="AcceptsReturn" Value="True"/>
+            <Setter Property="VerticalScrollBarVisibility" Value="Auto"/>
+            <Setter Property="HorizontalScrollBarVisibility" Value="Auto"/>
+            <Setter Property="Margin" Value="0"/>
+        </Style>
+
+        <Style TargetType="ComboBox">
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="MinWidth" Value="120"/>
+        </Style>
+
+        <Style TargetType="GroupBox">
+            <Setter Property="Margin" Value="0,0,0,12"/>
+            <Setter Property="Padding" Value="8"/>
+        </Style>
+
+        <Style TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Margin="16">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="370"/>
+            <ColumnDefinition Width="8"/>
+            <ColumnDefinition Width="370"/>
+            <ColumnDefinition Width="8"/>
+            <ColumnDefinition Width="370"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- LEFT PANEL: structures + rules -->
+        <StackPanel Grid.Column="0">
+
+            <!-- Couch & Rings -->
+            <GroupBox Header="Couch and adaptation ring">
+                <UniformGrid Columns="1" Margin="0,0,0,-8">
+                    <Button x:Name="btnCouchStruct"
+                            Content="Create couch structure"
+                            Click="BtnCouchStruct_Click"
+                            Margin="0,0,0,8"/>
+
+                    <Button x:Name="btn2cmRing"
+                            Content="Create 2 cm ring"
+                            Click="Btn2cmRing_Click"
+                            Margin="0,0,0,0"/>
+                </UniformGrid>
+            </GroupBox>
+
+            <!-- Density / override helper structures -->
+            <GroupBox Header="Density override structures (do not use with synthetic CT)">
+                <StackPanel Margin="-2,0,0,-8">
+                    <Button x:Name="btnAIRStruct"
+                            Content="Detect air and override with water"
+                            Click="BtnAIRStruct_Click"
+                            Margin="0,0,0,8"/>
+
+                    <Button x:Name="btnHDStruct"
+                            Content="Create overrides for high-density implants"
+                            Click="BtnHDStruct_Click"
+                            Margin="0,0,0,8"/>
+                </StackPanel>
+            </GroupBox>
+
+            <!-- Rule engine -->
+            <GroupBox Header="Automation rules">
+                <StackPanel>
+                    <Button x:Name="btnCreateRulesFromTemplate"
+                            Content="Create rules from a template"
+                            Click="BtnCreateRulesFromTemplate_Click"/>
+
+                    <Button x:Name="btnCreateRule"
+                            Content="Create a single rule"
+                            Click="BtnCreateRule_Click"/>
+
+                    <Button x:Name="btnInspectRules"
+                            Content="Inspect rules"
+                            Click="BtnInspectRules_Click"/>
+
+                    <Button x:Name="btnDeleteRules"
+                            Content="Manage rules"
+                            Click="BtnEditRules_Click"/>
+
+                    <Button x:Name="btnApplyRules"
+                            Content="Apply rules"
+                            Click="BtnApplyRules_Click"
+                            Margin="0,8,0,0"/>
+                </StackPanel>
+            </GroupBox>
+
+        </StackPanel>
+
+        <!-- SPLITTER BETWEEN LEFT & MIDDLE -->
+        <GridSplitter Grid.Column="1"
+                      HorizontalAlignment="Stretch"
+                      VerticalAlignment="Stretch"
+                      ShowsPreview="True"
+                      Background="#22000000"/>
+
+        <!-- MIDDLE PANEL: Plan Adaptation above QA buttons -->
+        <Grid Grid.Column="2">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <!-- Plan Adaptation -->
+            <GroupBox Header="Plan Adaptation" Grid.Row="0">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- Fraction selection -->
+                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Fraction letter:" Margin="0,0,8,8"/>
+                    <ComboBox x:Name="cb_FractionLetter"
+                              Grid.Row="0" Grid.Column="1"
+                              Margin="0,0,0,8"
+                              SelectedIndex="0">
+                        <ComboBoxItem Content="A"/>
+                        <ComboBoxItem Content="B"/>
+                        <ComboBoxItem Content="C"/>
+                        <ComboBoxItem Content="D"/>
+                        <ComboBoxItem Content="E"/>
+                        <ComboBoxItem Content="F"/>
+                        <ComboBoxItem Content="G"/>
+                        <ComboBoxItem Content="H"/>
+                        <ComboBoxItem Content="I"/>
+                        <ComboBoxItem Content="J"/>
+                        <ComboBoxItem Content="K"/>
+                        <ComboBoxItem Content="L"/>
+                    </ComboBox>
+
+                    <!-- Structure set selection -->
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Structure Set:" Margin="0,0,8,8"/>
+                    <ComboBox x:Name="cbStructureSets"
+                              Grid.Row="1" Grid.Column="1"
+                              Margin="0,0,0,8" SelectionChanged="cbStructureSets_SelectionChanged"/>
+
+                    <!-- Machine selection -->
+                    <TextBlock Grid.Row="2" Grid.Column="0" Text="Machine:" Margin="0,0,8,8"/>
+                    <ComboBox x:Name="cbMachine"
+                              Grid.Row="2" Grid.Column="1"
+                              Margin="0,0,0,8"
+                              SelectedIndex="0"
+                              SelectionChanged="cbMachine_SelectionChanged">
+                        <ComboBoxItem Content="Edge2018"/>
+                        <ComboBoxItem Content="TrueBeam3232"/>
+                    </ComboBox>
+
+                    <!-- Copy plan -->
+                    <Button x:Name="btnCopyPlan"
+                            Grid.Row="3" Grid.ColumnSpan="2"
+                            Content="Copy original plan to new structure set"
+                            Click="BtnCopyPlan_Click"/>
+                </Grid>
+            </GroupBox>
+
+            <!-- QA (buttons only now) -->
+            <GroupBox Header="QA" Grid.Row="1">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <Button x:Name="btnComparePlans"
+                            Grid.Row="0"
+                            Content="Compare to original plan"
+                            Click="BtnComparePlans_Click"
+                            Margin="0,0,0,8"/>
+
+                    <Button x:Name="btnSendToSciMoCa"
+                            Grid.Row="1"
+                            Content="Send to SciMoCa"
+                            Click="BtnSendToSciMoCa_Click"
+                            Margin="0,0,0,8"/>
+
+                    <Button x:Name="btnPerformQA"
+                            Grid.Row="2"
+                            Content="Perform PSQA (water recalculation)"
+                            Click="BtnPerformQA_Click"
+                            Margin="0,0,0,8"/>
+                </Grid>
+            </GroupBox>
+        </Grid>
+
+        <!-- SPLITTER BETWEEN MIDDLE & RIGHT -->
+        <GridSplitter Grid.Column="3"
+                      HorizontalAlignment="Stretch"
+                      VerticalAlignment="Stretch"
+                      ShowsPreview="True"
+                      Background="#22000000"/>
+
+        <!-- RIGHT PANEL: Output TextBox -->
+        <TextBox x:Name="txtOutputQA"
+                 Grid.Column="4"
+                 MinHeight="300"
+                 TextWrapping="Wrap"
+                 IsReadOnly="True"
+                 TextChanged="txtOutputQA_TextChanged"/>
+    </Grid>
+</UserControl>

@@ -1,0 +1,57 @@
+name: ESAPI build
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "eclipse_script/**"
+      - ".github/workflows/esapi-build.yml"
+  pull_request:
+    paths:
+      - "eclipse_script/**"
+      - ".github/workflows/esapi-build.yml"
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: nuget/setup-nuget@v2
+
+      - uses: microsoft/setup-msbuild@v2
+
+      - name: Check ESAPI assembly source
+        shell: pwsh
+        env:
+          ESAPI_ASSEMBLIES_URL: ${{ vars.ESAPI_ASSEMBLIES_URL }}
+          ESAPI_ASSEMBLIES_TOKEN: ${{ secrets.ESAPI_ASSEMBLIES_TOKEN }}
+        run: |
+          if (-not $env:ESAPI_ASSEMBLIES_URL) {
+            throw "Repository variable ESAPI_ASSEMBLIES_URL is required."
+          }
+          if (-not $env:ESAPI_ASSEMBLIES_TOKEN) {
+            throw "Repository secret ESAPI_ASSEMBLIES_TOKEN is required."
+          }
+
+      - name: Download ESAPI assemblies
+        shell: pwsh
+        env:
+          ESAPI_ASSEMBLIES_URL: ${{ vars.ESAPI_ASSEMBLIES_URL }}
+          ESAPI_ASSEMBLIES_TOKEN: ${{ secrets.ESAPI_ASSEMBLIES_TOKEN }}
+        run: |
+          $target = "eclipse_script/ESAPI 18.1"
+          New-Item -ItemType Directory -Force -Path $target | Out-Null
+          $archive = Join-Path $env:RUNNER_TEMP "esapi-assemblies.zip"
+          Invoke-WebRequest `
+            -Uri $env:ESAPI_ASSEMBLIES_URL `
+            -Headers @{ Authorization = "Bearer $env:ESAPI_ASSEMBLIES_TOKEN" } `
+            -OutFile $archive
+          Expand-Archive -Force -Path $archive -DestinationPath $target
+
+      - name: Restore NuGet packages
+        run: nuget restore eclipse_script/USZ_ARTEMIS.sln -PackagesDirectory eclipse_script/packages
+
+      - name: Build ESAPI solution
+        run: msbuild eclipse_script/USZ_ARTEMIS.sln /p:Configuration=Release /p:Platform=x64 /m

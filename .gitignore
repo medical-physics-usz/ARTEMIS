@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+
+# PyInstaller
+*.spec.bak
+preprocessing/packaging/pyinstaller/build/
+preprocessing/packaging/pyinstaller/dist/
+
+# Visual Studio / .NET
+.vs/
+.idea/
+bin/
+obj/
+packages/
+plugins/
+*.user
+*.suo
+*.csproj.user
+eclipse_script/ESAPI 18.1/
+eclipse_script/packages/
+eclipse_script/**/bin/
+eclipse_script/**/obj/
+eclipse_script/**/plugins/
+
+# Logs and outputs
+logs/
+outputs/
+results/
+tmp/
+temp/
+
+# Medical data / sensitive data
+*.dcm
+*.DCM
+*.nii
+*.nii.gz
+*.mha
+*.nrrd
+*.rtstruct
+*.rtdose
+*.rtplan
+
+# Local configs / secrets
+config.yaml
+config.json
+AppPaths.local.json
+USZ_ARTEMIS_Preprocessing.local.config
+*.local.yaml
+*.local.json
+*.local.config
+.env
