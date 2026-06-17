@@ -2,7 +2,7 @@
 
 ## ARTEMIS Preprocessing
 
-Install Python 3.10 or newer.
+Install Python 3.12 or newer.
 
 ```bash
 cd preprocessing

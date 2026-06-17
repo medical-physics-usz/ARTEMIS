@@ -22,4 +22,4 @@ Git.
 
 ## Build
 
-Use Visual Studio or MSBuild with the `Release|x64` configuration. Build outputs are generated under the project `plugins/` folder and are ignored by Git.
+Use Visual Studio. Build outputs are generated under the project `plugins/` folder and are ignored by Git.

@@ -5,9 +5,9 @@ ARTEMIS: Adaptive Radiation Therapy Enhanced by Magnetic Resonance Imaging Syste
 This repository is a monorepo with two independent clinical software subprojects:
 
 - `preprocessing/`: Python preprocessing pipeline and GUI, built as a standalone executable with PyInstaller.
-- `eclipse_script/`: full Visual Studio / Eclipse Scripting API project.
+- `eclipse_script/`: Eclipse Scripting API (ESAPI) project.
 
-The Python executable workflow also contains a small Eclipse launcher script in `preprocessing/eclipse_launcher/`. That launcher is copied manually to the Varian Published Scripts folder and starts the generated Python executable. It is not a C# project and is not built by CI.
+The Python pipeline also contains an Eclipse launcher script in `preprocessing/eclipse_launcher/`.
 
 ## Common Tasks
 
@@ -16,13 +16,11 @@ The Python executable workflow also contains a small Eclipse launcher script in 
 - ESAPI development: see `eclipse_script/README.md`.
 - Data handling rules: see `docs/data_protection.md`.
 
-## Repository Layout
+## Repository Structure
 
 ```text
-preprocessing/           Python application, tests, configs, and PyInstaller files
-preprocessing/eclipse_launcher/
-                           Single manually deployed Eclipse launcher script
-eclipse_script/             Visual Studio ESAPI solution and project
-docs/                      Shared workflow and deployment documentation
-.github/workflows/         Separate Python, executable, and ESAPI CI workflows
+preprocessing/                      Python application, tests, configs, and PyInstaller files
+preprocessing/eclipse_launcher/     Preprocessing app launcher
+eclipse_script/                     ESAPI script
+docs/                               Documentation
 ```
