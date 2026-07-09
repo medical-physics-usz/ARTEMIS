@@ -476,3 +476,4 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
     output_filename = os.path.join(current_directory, rtstruct_new_filename)
     pydicom.dcmwrite(output_filename, rtstruct_new, write_like_original=False)
     # print(f"Updated RTSTRUCT saved to {output_filename}")
+    return output_filename

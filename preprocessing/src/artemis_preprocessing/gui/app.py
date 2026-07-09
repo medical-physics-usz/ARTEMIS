@@ -38,9 +38,9 @@ from artemis_preprocessing.utils import (
     require_env,
 )
 from artemis_preprocessing.dicom.segmentation import create_empty_rtstruct
-from artemis_preprocessing.dicom.copy_structures import (
-    copy_structures,
-    _rtstruct_references_series,
+from artemis_preprocessing.dicom.copy_structures import _rtstruct_references_series
+from artemis_preprocessing.dicom.crop_series import (
+    copy_structures_and_crop as _copy_structures_and_crop,
 )
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
@@ -216,7 +216,7 @@ def _copy_structures_process(
         def progress_cb(idx, total):
             progress_q.put((idx, total))
 
-        copy_structures(
+        crop_result = _copy_structures_and_crop(
             current_directory,
             patient_id,
             rtplan_label,
@@ -225,6 +225,7 @@ def _copy_structures_process(
             base_series_uid=base_series_uid,
             progress_callback=progress_cb,
         )
+        progress_q.put(("crop_result", crop_result.to_dict()))
     except Exception as exc:
         progress_q.put(("error", str(exc)))
     finally:
@@ -567,12 +568,24 @@ def main():
             schedule_automation_next()
             return
 
-        unsent_imaging = imaging_now - automation_state["sent_series_uids"]
+        unsent_imaging = (
+            imaging_now
+            - automation_state["sent_series_uids"]
+            - aria_blocked_series_uids
+            - aria_refresh_required_uids
+        )
 
+        unavailable_imaging_uids = (
+            aria_blocked_series_uids | aria_refresh_required_uids
+        )
         reg_uids = {
             uid
             for uid, info in series_info.items()
             if info.get("modality") == "REG"
+            and not (
+                set(info.get("references", []) or [])
+                & unavailable_imaging_uids
+            )
         }
 
         if automation_state["registration_successful"]:
@@ -719,6 +732,9 @@ def main():
     references_map = {}
     sent_info = {}
     latest_imaging_uids: set[str] = set()
+    aria_blocked_series_uids: set[str] = set()
+    aria_refresh_required_uids: set[str] = set()
+    crop_in_progress_uids: set[str] = set()
 
     imaging_refresh_in_progress = False
 
@@ -747,6 +763,9 @@ def main():
             series_info = local_series
             references_map = references
             latest_imaging_uids = set(imaging_uids)
+            aria_refresh_required_uids.difference_update(
+                aria_refresh_required_uids - crop_in_progress_uids
+            )
             rtstruct_uids = [
                 uid
                 for uid, info in local_series.items()
@@ -1102,6 +1121,9 @@ def main():
             last_rigid_transform = rigid_transform
             last_fixed_uid = used_fixed_uid
             last_moving_uid = used_moving_uid
+            if used_fixed_uid:
+                aria_refresh_required_uids.add(used_fixed_uid)
+                crop_in_progress_uids.add(used_fixed_uid)
             register_status.config(text="\u2705", fg="green")
 
             copy_status.config(text="\u23F3", fg="orange")
@@ -1124,7 +1146,7 @@ def main():
             def copy_worker():
                 try:
                     print(f"{get_datetime()} Copying the structures...")
-                    copy_structures(
+                    crop_result = _copy_structures_and_crop(
                         str(input_dir),
                         patient_id,
                         rtplan_label,
@@ -1133,6 +1155,7 @@ def main():
                         base_series_uid=used_moving_uid,
                         progress_callback=progress_cb,
                     )
+                    result_state["crop_result"] = crop_result.to_dict()
                     result_state["success"] = True
                 except Exception as exc:
                     result_state["error"] = exc
@@ -1176,8 +1199,12 @@ def main():
                 if result_state.get("error") is None and not result_state.get("success"):
                     result_state["success"] = True
                 if result_state.get("success"):
+                    if used_fixed_uid:
+                        aria_blocked_series_uids.discard(used_fixed_uid)
                     copy_status.config(text="\u2705", fg="green")
                 else:
+                    if used_fixed_uid:
+                        aria_blocked_series_uids.add(used_fixed_uid)
                     copy_status.config(text="\u274C", fg="red")
                     err = result_state.get("error")
                     if err:
@@ -1200,6 +1227,9 @@ def main():
                     automation_state["registration_in_progress"] = False
                     automation_state["registration_completed"] = True
                     automation_state["registration_successful"] = registration_was_successful
+                if used_fixed_uid:
+                    aria_refresh_required_uids.add(used_fixed_uid)
+                    crop_in_progress_uids.discard(used_fixed_uid)
                 on_get_images()
 
             def poll_queue():
@@ -1217,6 +1247,9 @@ def main():
                                 continue
                             if tag == "log":
                                 print(item[1], end="")
+                                continue
+                            if tag == "crop_result":
+                                result_state["crop_result"] = item[1]
                                 continue
                         idx, total = item
                         register_progress["maximum"] = total
@@ -1333,14 +1366,43 @@ def main():
                 messagebox.showinfo("Send to Aria", "No series selected.")
             return
 
+        unavailable_uids = aria_blocked_series_uids | aria_refresh_required_uids
+        blocked_uids = {
+            uid
+            for uid in target_set
+            if (
+                uid in unavailable_uids
+                or (
+                    set(series_info.get(uid, {}).get("references", []) or [])
+                    & unavailable_uids
+                )
+            )
+        }
+        if blocked_uids:
+            target_set -= blocked_uids
+            for uid in blocked_uids:
+                var = series_vars.get(uid)
+                if var is not None:
+                    var.set(False)
+            message = (
+                "The following series were not sent because contour copying, "
+                "image cropping, or the required series refresh did not complete: "
+                + ", ".join(sorted(blocked_uids))
+            )
+            if triggered_by_automation:
+                automation_log(message)
+            else:
+                messagebox.showerror("Send to Aria", message)
+        if not target_set:
+            return
+
         selected_files = []
-        for uid, var in series_vars.items():
-            if var.get():
-                info = series_info.get(uid, {})
-                selected_files.extend(info.get("files", []))
-                for rs_uid in references_map.get(uid, []):
-                    rs_info = series_info.get(rs_uid, {})
-                    selected_files.extend(rs_info.get("files", []))
+        for uid in target_set:
+            info = series_info.get(uid, {})
+            selected_files.extend(info.get("files", []))
+            for rs_uid in references_map.get(uid, []):
+                rs_info = series_info.get(rs_uid, {})
+                selected_files.extend(rs_info.get("files", []))
 
         if not selected_files:
             if triggered_by_automation:
