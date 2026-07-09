@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import os
+import shutil
 import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -25,6 +26,10 @@ class CropResult:
     retained_count: int = 0
     deleted_count: int = 0
     roi_name: str | None = None
+    original_rows: int | None = None
+    original_columns: int | None = None
+    cropped_rows: int | None = None
+    cropped_columns: int | None = None
     warning: str | None = None
     error: str | None = None
 
@@ -38,6 +43,12 @@ class _Slice:
     position: float
     sop_instance_uid: str
     sop_class_uid: str
+    image_position: np.ndarray
+    row_direction: np.ndarray
+    column_direction: np.ndarray
+    pixel_spacing: np.ndarray
+    rows: int
+    columns: int
 
 
 class CropSeriesError(RuntimeError):
@@ -82,6 +93,18 @@ def _load_series_slices(directory: str, series_uid: str) -> tuple[list[_Slice], 
     if norm < 1e-6:
         raise CropSeriesError("Image orientation produces an invalid slice normal")
     normal /= norm
+    first_pixel_spacing = _as_vector(
+        getattr(records[0][1], "PixelSpacing", None),
+        length=2,
+        field="PixelSpacing",
+    )
+    if np.any(first_pixel_spacing <= 0):
+        raise CropSeriesError("PixelSpacing must contain positive values")
+    try:
+        first_rows = int(getattr(records[0][1], "Rows", 0))
+        first_columns = int(getattr(records[0][1], "Columns", 0))
+    except (TypeError, ValueError) as exc:
+        raise CropSeriesError("Invalid Rows or Columns") from exc
 
     slices: list[_Slice] = []
     seen_sops: set[str] = set()
@@ -98,12 +121,44 @@ def _load_series_slices(directory: str, series_uid: str) -> tuple[list[_Slice], 
         slice_normal /= slice_norm
         if abs(float(np.dot(normal, slice_normal))) < 1.0 - 1e-4:
             raise CropSeriesError("Image slices do not share a consistent orientation")
+        if not np.allclose(iop, first_iop, rtol=0, atol=1e-5):
+            raise CropSeriesError("Image slices do not share identical orientation")
 
         ipp = _as_vector(
             getattr(ds, "ImagePositionPatient", None),
             length=3,
             field=f"ImagePositionPatient in {path.name}",
         )
+        pixel_spacing = _as_vector(
+            getattr(ds, "PixelSpacing", None),
+            length=2,
+            field=f"PixelSpacing in {path.name}",
+        )
+        if not np.allclose(pixel_spacing, first_pixel_spacing, rtol=0, atol=1e-5):
+            raise CropSeriesError("Image slices do not share identical pixel spacing")
+        try:
+            rows = int(getattr(ds, "Rows", 0))
+            columns = int(getattr(ds, "Columns", 0))
+        except (TypeError, ValueError) as exc:
+            raise CropSeriesError(f"Invalid Rows or Columns in {path.name}") from exc
+        if rows != first_rows or columns != first_columns:
+            raise CropSeriesError("Image slices do not share identical dimensions")
+        if getattr(ds, "Modality", "") not in {"CT", "MR"}:
+            raise CropSeriesError(f"Unsupported modality in {path.name}")
+        if int(getattr(ds, "NumberOfFrames", 1) or 1) != 1:
+            raise CropSeriesError("Multiframe images are not supported")
+        if int(getattr(ds, "SamplesPerPixel", 0) or 0) != 1:
+            raise CropSeriesError("Only single-sample monochrome images are supported")
+        if getattr(ds, "PhotometricInterpretation", "") not in {
+            "MONOCHROME1",
+            "MONOCHROME2",
+        }:
+            raise CropSeriesError("Only monochrome images are supported")
+        transfer_syntax = getattr(ds.file_meta, "TransferSyntaxUID", None)
+        if transfer_syntax is None:
+            raise CropSeriesError(f"Missing Transfer Syntax UID in {path.name}")
+        if transfer_syntax.is_compressed:
+            raise CropSeriesError("Compressed image data is not supported")
         sop_uid = str(getattr(ds, "SOPInstanceUID", "") or "")
         sop_class_uid = str(getattr(ds, "SOPClassUID", "") or "")
         if not sop_uid or not sop_class_uid:
@@ -117,6 +172,12 @@ def _load_series_slices(directory: str, series_uid: str) -> tuple[list[_Slice], 
                 position=float(np.dot(ipp, normal)),
                 sop_instance_uid=sop_uid,
                 sop_class_uid=sop_class_uid,
+                image_position=ipp,
+                row_direction=iop[:3],
+                column_direction=iop[3:],
+                pixel_spacing=pixel_spacing,
+                rows=rows,
+                columns=columns,
             )
         )
 
@@ -212,6 +273,44 @@ def _series_coverage(positions: np.ndarray) -> tuple[float, float]:
     return float(lower), float(upper)
 
 
+def _validate_target_in_plane(
+    roi_contour: Dataset,
+    *,
+    slices: list[_Slice],
+    normal: np.ndarray,
+    crop_pixels: int,
+) -> None:
+    positions = np.asarray([item.position for item in slices], dtype=float)
+    rows = slices[0].rows
+    columns = slices[0].columns
+    minimum_index = crop_pixels - 0.5
+    maximum_column = columns - crop_pixels - 0.5
+    maximum_row = rows - crop_pixels - 0.5
+    tolerance = 1e-3
+
+    for contour in roi_contour.ContourSequence:
+        points = _contour_points(contour)
+        contour_position = float(np.mean(points @ normal))
+        slice_info = slices[_nearest_slice_index(positions, contour_position)]
+        offsets = points - slice_info.image_position
+        column_indices = (
+            offsets @ slice_info.row_direction
+        ) / slice_info.pixel_spacing[1]
+        row_indices = (
+            offsets @ slice_info.column_direction
+        ) / slice_info.pixel_spacing[0]
+        if (
+            np.min(column_indices) < minimum_index - tolerance
+            or np.max(column_indices) > maximum_column + tolerance
+            or np.min(row_indices) < minimum_index - tolerance
+            or np.max(row_indices) > maximum_row + tolerance
+        ):
+            raise CropSeriesError(
+                "The crop-limiting ROI extends outside the reduced in-plane "
+                "field of view"
+            )
+
+
 def _image_reference(slice_info: _Slice) -> Dataset:
     reference = Dataset()
     reference.ReferencedSOPClassUID = slice_info.sop_class_uid
@@ -266,26 +365,92 @@ def _update_rtstruct_references(
     return updated
 
 
-def _write_rtstruct_safely(rtstruct: Dataset, rtstruct_path: str) -> None:
-    destination = Path(rtstruct_path)
-    temp_path: str | None = None
+def _stage_cropped_slices(
+    slices: list[_Slice],
+    *,
+    crop_pixels: int,
+    staging_directory: Path,
+) -> list[tuple[Path, Path]]:
+    staged: list[tuple[Path, Path]] = []
+    for index, slice_info in enumerate(slices):
+        ds = pydicom.dcmread(str(slice_info.path))
+        if "PixelData" not in ds:
+            raise CropSeriesError(f"Missing PixelData in {slice_info.path.name}")
+        pixels = ds.pixel_array
+        if pixels.ndim != 2 or pixels.shape != (slice_info.rows, slice_info.columns):
+            raise CropSeriesError(
+                f"Unexpected pixel-array dimensions in {slice_info.path.name}"
+            )
+        cropped = np.ascontiguousarray(
+            pixels[crop_pixels:-crop_pixels, crop_pixels:-crop_pixels]
+        )
+        if cropped.size == 0:
+            raise CropSeriesError("The in-plane crop produced an empty image")
+
+        ds.Rows, ds.Columns = cropped.shape
+        pixel_bytes = cropped.tobytes()
+        if len(pixel_bytes) % 2:
+            pixel_bytes += b"\0"
+        ds.PixelData = pixel_bytes
+
+        shifted_position = (
+            slice_info.image_position
+            + crop_pixels
+            * slice_info.pixel_spacing[1]
+            * slice_info.row_direction
+            + crop_pixels
+            * slice_info.pixel_spacing[0]
+            * slice_info.column_direction
+        )
+        ds.ImagePositionPatient = [f"{value:.10g}" for value in shifted_position]
+        if "SmallestImagePixelValue" in ds:
+            ds.SmallestImagePixelValue = int(np.min(cropped))
+        if "LargestImagePixelValue" in ds:
+            ds.LargestImagePixelValue = int(np.max(cropped))
+
+        staged_path = staging_directory / f"image_{index:06d}.tmp"
+        pydicom.dcmwrite(staged_path, ds, write_like_original=False)
+        staged.append((staged_path, slice_info.path))
+    return staged
+
+
+def _commit_staged_crop(
+    *,
+    staged_files: list[tuple[Path, Path]],
+    files_to_delete: list[Path],
+    staged_rtstruct: Path,
+    rtstruct_path: Path,
+    working_directory: str,
+) -> None:
+    backup_directory = Path(
+        tempfile.mkdtemp(prefix=".crop_backup_", dir=working_directory)
+    )
+    replacements = [(staged_rtstruct, rtstruct_path), *staged_files]
+    originals = [rtstruct_path, *[path for _, path in staged_files], *files_to_delete]
+    moved: list[tuple[Path, Path]] = []
+    preserve_backup = False
     try:
-        with tempfile.NamedTemporaryFile(
-            prefix=f".{destination.name}.",
-            suffix=".tmp",
-            dir=str(destination.parent),
-            delete=False,
-        ) as temp_file:
-            temp_path = temp_file.name
-        pydicom.dcmwrite(temp_path, rtstruct, write_like_original=False)
-        os.replace(temp_path, destination)
-        temp_path = None
-    finally:
-        if temp_path and os.path.exists(temp_path):
+        for index, original in enumerate(originals):
+            backup = backup_directory / f"original_{index:06d}"
+            os.replace(original, backup)
+            moved.append((backup, original))
+        for staged_path, destination in replacements:
+            os.replace(staged_path, destination)
+    except Exception as exc:
+        rollback_errors = []
+        for backup, original in reversed(moved):
             try:
-                os.remove(temp_path)
-            except OSError:
-                pass
+                os.replace(backup, original)
+            except Exception as rollback_exc:
+                rollback_errors.append(str(rollback_exc))
+        detail = f"Failed to commit cropped DICOM files: {exc}"
+        if rollback_errors:
+            preserve_backup = True
+            detail += "; rollback errors: " + "; ".join(rollback_errors)
+        raise CropSeriesError(detail) from exc
+    finally:
+        if not preserve_backup:
+            shutil.rmtree(backup_directory, ignore_errors=True)
 
 
 def crop_registered_series(
@@ -295,6 +460,7 @@ def crop_registered_series(
     *,
     roi_suffix: str = "+2cm_Ph",
     padding_slices: int = 2,
+    in_plane_crop_pixels: int = 100,
 ) -> CropResult:
     """Crop *series_uid* to a uniquely matching contoured ROI.
 
@@ -305,6 +471,8 @@ def crop_registered_series(
     try:
         if padding_slices < 0:
             raise CropSeriesError("padding_slices must be non-negative")
+        if in_plane_crop_pixels <= 0:
+            raise CropSeriesError("in_plane_crop_pixels must be positive")
 
         rtstruct = pydicom.dcmread(rtstruct_path)
         matching_count = _matching_roi_count(rtstruct, roi_suffix)
@@ -317,6 +485,14 @@ def crop_registered_series(
             return CropResult(status="skipped", warning=warning)
 
         slices, normal = _load_series_slices(current_directory, series_uid)
+        original_rows = slices[0].rows
+        original_columns = slices[0].columns
+        cropped_rows = original_rows - 2 * in_plane_crop_pixels
+        cropped_columns = original_columns - 2 * in_plane_crop_pixels
+        if cropped_rows <= 0 or cropped_columns <= 0:
+            raise CropSeriesError(
+                "Image Rows and Columns must both exceed twice the in-plane crop"
+            )
         positions = np.asarray([item.position for item in slices], dtype=float)
         projected_points = []
         for contour in roi_contour.ContourSequence:
@@ -332,6 +508,12 @@ def crop_registered_series(
             raise CropSeriesError(
                 f"ROI '{roi_name}' extends outside the referenced image series"
             )
+        _validate_target_in_plane(
+            roi_contour,
+            slices=slices,
+            normal=normal,
+            crop_pixels=in_plane_crop_pixels,
+        )
 
         first_contour = _nearest_slice_index(positions, min(projected_points))
         last_contour = _nearest_slice_index(positions, max(projected_points))
@@ -352,9 +534,31 @@ def crop_registered_series(
             last_kept=last_kept,
         )
         to_delete = slices[:first_kept] + slices[last_kept + 1:]
-        _write_rtstruct_safely(updated_rtstruct, rtstruct_path)
-        for item in to_delete:
-            os.remove(item.path)
+        retained_slices = slices[first_kept:last_kept + 1]
+        staging_directory = Path(
+            tempfile.mkdtemp(prefix=".crop_staging_", dir=current_directory)
+        )
+        try:
+            staged_rtstruct = staging_directory / "rtstruct.tmp"
+            pydicom.dcmwrite(
+                staged_rtstruct,
+                updated_rtstruct,
+                write_like_original=False,
+            )
+            staged_files = _stage_cropped_slices(
+                retained_slices,
+                crop_pixels=in_plane_crop_pixels,
+                staging_directory=staging_directory,
+            )
+            _commit_staged_crop(
+                staged_files=staged_files,
+                files_to_delete=[item.path for item in to_delete],
+                staged_rtstruct=staged_rtstruct,
+                rtstruct_path=Path(rtstruct_path),
+                working_directory=current_directory,
+            )
+        finally:
+            shutil.rmtree(staging_directory, ignore_errors=True)
 
         retained_count = last_kept - first_kept + 1
         return CropResult(
@@ -362,6 +566,10 @@ def crop_registered_series(
             retained_count=retained_count,
             deleted_count=len(to_delete),
             roi_name=roi_name,
+            original_rows=original_rows,
+            original_columns=original_columns,
+            cropped_rows=cropped_rows,
+            cropped_columns=cropped_columns,
         )
     except Exception as exc:
         return CropResult(status="failed", error=str(exc))
@@ -403,7 +611,9 @@ def copy_structures_and_crop(
     if result.status == "cropped":
         print(
             f"{get_datetime()} Cropped series to ROI '{result.roi_name}': "
-            f"retained {result.retained_count}, deleted {result.deleted_count} slices"
+            f"retained {result.retained_count}, deleted {result.deleted_count} slices; "
+            f"FOV {result.original_columns}x{result.original_rows} -> "
+            f"{result.cropped_columns}x{result.cropped_rows} pixels"
         )
     elif result.status == "skipped":
         print(f"{get_datetime()} Crop skipped: {result.warning}")
