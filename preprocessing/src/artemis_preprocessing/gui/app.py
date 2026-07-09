@@ -823,7 +823,7 @@ def main():
                 resample_mr_series_by_description(
                     str(input_dir),
                     series_description="sCT_sp_Pel_T2",
-                    target_slice_thickness=3.0,
+                    target_slice_thickness=2.5,
                 )
 
                 local_series = list_dicom_series(str(input_dir))
