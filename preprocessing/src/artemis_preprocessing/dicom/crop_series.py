@@ -377,7 +377,11 @@ def _update_rtstruct_references(
                     for reference in contour_references
                 )
             )
-            if contour_references and not referenced_source:
+            if (
+                contour_references
+                and not referenced_source
+                and not bind_unreferenced_contours
+            ):
                 kept_contours.append(contour)
                 continue
             if not contour_references and not bind_unreferenced_contours:
@@ -751,7 +755,33 @@ def copy_structures_and_crop(
     base_series_uid: str | None,
     progress_callback=None,
 ) -> CropResult:
-    """Copy transformed structures, then crop their registered image series."""
+    """Copy transformed structures, then crop their registered image series.
+
+    A skipped crop is a successful copy-only outcome. A failed crop, or an
+    exception raised while attempting it, restores the target RTSTRUCT exactly
+    as it was before the copy (or removes an RTSTRUCT created by the copy).
+    """
+
+    current_path = Path(current_directory)
+    rtstruct_snapshots: dict[Path, bytes] = {}
+    canonical_target = (
+        (current_path / f"RS_{series_uid}.dcm").resolve()
+        if series_uid
+        else None
+    )
+    for candidate in current_path.iterdir():
+        if not candidate.is_file():
+            continue
+        resolved_candidate = candidate.resolve()
+        if resolved_candidate == canonical_target:
+            rtstruct_snapshots[resolved_candidate] = candidate.read_bytes()
+            continue
+        try:
+            dataset = pydicom.dcmread(candidate, stop_before_pixels=True)
+        except Exception:
+            continue
+        if str(getattr(dataset, "Modality", "")) == "RTSTRUCT":
+            rtstruct_snapshots[resolved_candidate] = candidate.read_bytes()
 
     rtstruct_path = copy_structures(
         current_directory,
@@ -762,17 +792,52 @@ def copy_structures_and_crop(
         base_series_uid=base_series_uid,
         progress_callback=progress_callback,
     )
-    if not series_uid:
-        result = CropResult(
-            status="failed",
-            error="Cannot crop registered image series without a Series Instance UID",
+    resolved_rtstruct_path = Path(rtstruct_path).resolve()
+
+    def restore_pre_copy_rtstruct() -> None:
+        original = rtstruct_snapshots.get(resolved_rtstruct_path)
+        if original is None:
+            resolved_rtstruct_path.unlink(missing_ok=True)
+            return
+
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{resolved_rtstruct_path.name}.rollback_",
+            dir=resolved_rtstruct_path.parent,
         )
-    else:
-        result = crop_registered_series(
-            current_directory,
-            series_uid,
-            rtstruct_path,
-        )
+        temporary_path = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "wb") as temporary_file:
+                temporary_file.write(original)
+                temporary_file.flush()
+                os.fsync(temporary_file.fileno())
+            os.replace(temporary_path, resolved_rtstruct_path)
+        finally:
+            temporary_path.unlink(missing_ok=True)
+
+    try:
+        if not series_uid:
+            result = CropResult(
+                status="failed",
+                error="Cannot crop registered image series without a Series Instance UID",
+            )
+        else:
+            result = crop_registered_series(
+                current_directory,
+                series_uid,
+                rtstruct_path,
+            )
+    except Exception:
+        restore_pre_copy_rtstruct()
+        raise
+
+    if result.status not in {"cropped", "skipped"}:
+        try:
+            restore_pre_copy_rtstruct()
+        except Exception as rollback_exc:
+            raise RuntimeError(
+                f"Image-series crop failed: {result.error}; "
+                f"failed to restore pre-copy RTSTRUCT: {rollback_exc}"
+            ) from rollback_exc
 
     if result.status == "cropped":
         print(

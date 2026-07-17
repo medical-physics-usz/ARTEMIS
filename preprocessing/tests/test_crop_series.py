@@ -373,6 +373,60 @@ def test_crop_updates_every_rtstruct_and_reg_reference(tmp_path: Path):
         )
 
 
+def test_crop_rebinds_primary_base_series_contour_references_only(tmp_path: Path):
+    series_uid, images = _write_image_series(tmp_path)
+    _, base_images = _write_image_series(tmp_path, prefix="BASE")
+    primary_path = _write_rtstruct(
+        tmp_path / "RS_primary.dcm",
+        series_uid=series_uid,
+        image_records=images,
+        rois=[("PTV+2cm_Ph", [_contour(3), _contour(6)])],
+    )
+    secondary_path = _write_rtstruct(
+        tmp_path / "RS_secondary.dcm",
+        series_uid=series_uid,
+        image_records=images,
+        rois=[("Organ", [_contour(4)])],
+    )
+
+    for path, image_indices in [(primary_path, [3, 6]), (secondary_path, [4])]:
+        rtstruct = pydicom.dcmread(path)
+        for contour, image_index in zip(
+            rtstruct.ROIContourSequence[0].ContourSequence, image_indices
+        ):
+            reference = Dataset()
+            reference.ReferencedSOPClassUID = CTImageStorage
+            reference.ReferencedSOPInstanceUID = base_images[image_index][1]
+            contour.ContourImageSequence = Sequence([reference])
+        pydicom.dcmwrite(path, rtstruct, enforce_file_format=True)
+
+    result = crop_registered_series(str(tmp_path), series_uid, str(primary_path))
+
+    assert result.status == "cropped"
+    expected_primary_references = [
+        str(
+            pydicom.dcmread(
+                images[index][0], stop_before_pixels=True
+            ).SOPInstanceUID
+        )
+        for index in [3, 6]
+    ]
+    updated_primary = pydicom.dcmread(primary_path)
+    assert [
+        str(contour.ContourImageSequence[0].ReferencedSOPInstanceUID)
+        for contour in updated_primary.ROIContourSequence[0].ContourSequence
+    ] == expected_primary_references
+
+    updated_secondary = pydicom.dcmread(secondary_path)
+    secondary_reference = (
+        updated_secondary.ROIContourSequence[0]
+        .ContourSequence[0]
+        .ContourImageSequence[0]
+        .ReferencedSOPInstanceUID
+    )
+    assert str(secondary_reference) == base_images[4][1]
+
+
 def test_crop_uses_oblique_slice_geometry(tmp_path: Path):
     angle = math.radians(30)
     iop = (1, 0, 0, 0, math.cos(angle), math.sin(angle))
@@ -735,3 +789,234 @@ def test_copy_and_crop_common_path_raises_on_crop_failure(monkeypatch):
             series_uid="1.2.3",
             base_series_uid="4.5.6",
         )
+
+
+def test_copy_and_crop_failure_restores_exact_pre_copy_rtstruct(
+    tmp_path: Path, monkeypatch
+):
+    series_uid = "1.2.3"
+    rtstruct_path = tmp_path / f"RS_{series_uid}.dcm"
+    original = b"exact original RTSTRUCT bytes\x00\xff"
+    copied = b"copied contour content"
+    rtstruct_path.write_bytes(original)
+
+    def fake_copy(*args, **kwargs):
+        rtstruct_path.write_bytes(copied)
+        return str(rtstruct_path)
+
+    monkeypatch.setattr(crop_series, "copy_structures", fake_copy)
+    monkeypatch.setattr(
+        crop_series,
+        "crop_registered_series",
+        lambda *args, **kwargs: crop_series.CropResult(
+            status="failed", error="invalid geometry"
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="invalid geometry"):
+        crop_series.copy_structures_and_crop(
+            str(tmp_path),
+            "patient",
+            "plan",
+            object(),
+            series_uid=series_uid,
+            base_series_uid="4.5.6",
+        )
+
+    assert rtstruct_path.read_bytes() == original
+
+
+def test_copy_and_crop_exception_restores_pre_copy_rtstruct(
+    tmp_path: Path, monkeypatch
+):
+    series_uid = "1.2.3"
+    rtstruct_path = tmp_path / f"RS_{series_uid}.dcm"
+    original = b"original"
+    rtstruct_path.write_bytes(original)
+
+    def fake_copy(*args, **kwargs):
+        rtstruct_path.write_bytes(b"copied")
+        return str(rtstruct_path)
+
+    def raise_during_crop(*args, **kwargs):
+        raise OSError("unexpected crop exception")
+
+    monkeypatch.setattr(crop_series, "copy_structures", fake_copy)
+    monkeypatch.setattr(crop_series, "crop_registered_series", raise_during_crop)
+
+    with pytest.raises(OSError, match="unexpected crop exception"):
+        crop_series.copy_structures_and_crop(
+            str(tmp_path),
+            "patient",
+            "plan",
+            object(),
+            series_uid=series_uid,
+            base_series_uid="4.5.6",
+        )
+
+    assert rtstruct_path.read_bytes() == original
+
+
+def test_copy_and_crop_failure_removes_new_rtstruct(tmp_path: Path, monkeypatch):
+    series_uid = "1.2.3"
+    rtstruct_path = tmp_path / f"RS_{series_uid}.dcm"
+
+    def fake_copy(*args, **kwargs):
+        rtstruct_path.write_bytes(b"new copied RTSTRUCT")
+        return str(rtstruct_path)
+
+    monkeypatch.setattr(crop_series, "copy_structures", fake_copy)
+    monkeypatch.setattr(
+        crop_series,
+        "crop_registered_series",
+        lambda *args, **kwargs: crop_series.CropResult(
+            status="failed", error="invalid geometry"
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="invalid geometry"):
+        crop_series.copy_structures_and_crop(
+            str(tmp_path),
+            "patient",
+            "plan",
+            object(),
+            series_uid=series_uid,
+            base_series_uid="4.5.6",
+        )
+
+    assert not rtstruct_path.exists()
+
+
+def test_copy_and_crop_skipped_keeps_copied_rtstruct(tmp_path: Path, monkeypatch):
+    series_uid = "1.2.3"
+    rtstruct_path = tmp_path / f"RS_{series_uid}.dcm"
+    rtstruct_path.write_bytes(b"original")
+
+    def fake_copy(*args, **kwargs):
+        rtstruct_path.write_bytes(b"copied")
+        return str(rtstruct_path)
+
+    monkeypatch.setattr(crop_series, "copy_structures", fake_copy)
+    monkeypatch.setattr(
+        crop_series,
+        "crop_registered_series",
+        lambda *args, **kwargs: crop_series.CropResult(
+            status="skipped", warning="no unique ROI"
+        ),
+    )
+
+    result = crop_series.copy_structures_and_crop(
+        str(tmp_path),
+        "patient",
+        "plan",
+        object(),
+        series_uid=series_uid,
+        base_series_uid="4.5.6",
+    )
+
+    assert result.status == "skipped"
+    assert rtstruct_path.read_bytes() == b"copied"
+
+
+def test_copy_and_crop_success_keeps_cropped_rtstruct(tmp_path: Path, monkeypatch):
+    series_uid = "1.2.3"
+    rtstruct_path = tmp_path / f"RS_{series_uid}.dcm"
+    rtstruct_path.write_bytes(b"original")
+
+    def fake_copy(*args, **kwargs):
+        rtstruct_path.write_bytes(b"copied")
+        return str(rtstruct_path)
+
+    def fake_crop(*args, **kwargs):
+        rtstruct_path.write_bytes(b"cropped")
+        return crop_series.CropResult(
+            status="cropped",
+            roi_name="PTV+2cm_Ph",
+            retained_count=5,
+            deleted_count=5,
+            original_rows=256,
+            original_columns=256,
+            cropped_rows=64,
+            cropped_columns=64,
+        )
+
+    monkeypatch.setattr(crop_series, "copy_structures", fake_copy)
+    monkeypatch.setattr(crop_series, "crop_registered_series", fake_crop)
+
+    result = crop_series.copy_structures_and_crop(
+        str(tmp_path),
+        "patient",
+        "plan",
+        object(),
+        series_uid=series_uid,
+        base_series_uid="4.5.6",
+    )
+
+    assert result.status == "cropped"
+    assert rtstruct_path.read_bytes() == b"cropped"
+
+
+@pytest.mark.parametrize("failure_kind", ["write", "staging", "replacement"])
+def test_copy_and_crop_crop_transaction_failure_restores_pre_copy_snapshot(
+    tmp_path: Path, monkeypatch, failure_kind: str
+):
+    series_uid, images = _write_image_series(tmp_path)
+    rtstruct_path = _write_rtstruct(
+        tmp_path / f"RS_{series_uid}.dcm",
+        series_uid=series_uid,
+        image_records=images,
+        rois=[("PTV+2cm_Ph", [_contour(3), _contour(5)])],
+    )
+    before = _snapshot(tmp_path)
+    real_dcmwrite = crop_series.pydicom.dcmwrite
+    real_replace = crop_series.os.replace
+
+    def fake_copy(*args, **kwargs):
+        dataset = pydicom.dcmread(rtstruct_path)
+        dataset.StructureSetLabel = "COPIED"
+        real_dcmwrite(rtstruct_path, dataset, write_like_original=False)
+
+        if failure_kind == "write":
+            def fail_staged_write(path, *write_args, **write_kwargs):
+                if ".crop_staging_" in str(path):
+                    raise OSError("simulated staged write failure")
+                return real_dcmwrite(path, *write_args, **write_kwargs)
+
+            monkeypatch.setattr(crop_series.pydicom, "dcmwrite", fail_staged_write)
+        elif failure_kind == "staging":
+            def fail_slice_staging(*stage_args, **stage_kwargs):
+                raise OSError("simulated slice staging failure")
+
+            monkeypatch.setattr(
+                crop_series, "_stage_cropped_slices", fail_slice_staging
+            )
+        else:
+            failed_once = False
+
+            def fail_image_replace(source, destination):
+                nonlocal failed_once
+                if (
+                    not failed_once
+                    and ".crop_staging_" in str(source)
+                    and Path(destination).name.startswith("CT_")
+                ):
+                    failed_once = True
+                    raise OSError("simulated replacement failure")
+                return real_replace(source, destination)
+
+            monkeypatch.setattr(crop_series.os, "replace", fail_image_replace)
+        return str(rtstruct_path)
+
+    monkeypatch.setattr(crop_series, "copy_structures", fake_copy)
+
+    with pytest.raises(RuntimeError, match="simulated"):
+        crop_series.copy_structures_and_crop(
+            str(tmp_path),
+            "patient",
+            "plan",
+            object(),
+            series_uid=series_uid,
+            base_series_uid="4.5.6",
+        )
+
+    assert _snapshot(tmp_path) == before
