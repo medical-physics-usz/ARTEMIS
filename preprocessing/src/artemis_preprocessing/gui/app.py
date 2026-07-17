@@ -185,7 +185,7 @@ def _copy_structures_process(
     rtplan_label: str,
     series_uid: str | None,
     base_series_uid: str | None,
-    progress_q: multiprocessing.Queue,
+    output_q: multiprocessing.Queue,
 ) -> None:
     """Run copy_structures in a separate process to keep the UI responsive."""
 
@@ -208,13 +208,10 @@ def _copy_structures_process(
                     self.queue.put(("log", self._buffer))
                     self._buffer = ""
 
-        sys.stdout = _QueueWriter(progress_q)
-        sys.stderr = _QueueWriter(progress_q)
+        sys.stdout = _QueueWriter(output_q)
+        sys.stderr = _QueueWriter(output_q)
 
         rigid_transform = sitk.ReadTransform(transform_path)
-
-        def progress_cb(idx, total):
-            progress_q.put((idx, total))
 
         copy_structures(
             current_directory,
@@ -223,12 +220,12 @@ def _copy_structures_process(
             rigid_transform,
             series_uid=series_uid,
             base_series_uid=base_series_uid,
-            progress_callback=progress_cb,
+            progress_callback=lambda _idx, _total: None,
         )
     except Exception as exc:
-        progress_q.put(("error", str(exc)))
+        output_q.put(("error", str(exc)))
     finally:
-        progress_q.put(None)
+        output_q.put(None)
 
 
 def find_rtstructs_for_series(directory: str, series_uid: str) -> list[str]:
@@ -1021,8 +1018,6 @@ def main():
 
     # Register button
     register_status = tk.Label(root, text="", font=("Helvetica", 14))
-    register_progress = ttk.Progressbar(root, length=200, mode="determinate")
-
     last_rigid_transform = None
     last_fixed_uid = None
     last_moving_uid = None
@@ -1106,13 +1101,8 @@ def main():
 
             copy_status.config(text="\u23F3", fg="orange")
             root.update_idletasks()
-            register_progress["value"] = 0
-            register_progress.grid()
-            progress_q = queue.Queue()
+            output_q = queue.Queue()
             result_state = {"success": False, "error": None}
-
-            def progress_cb(idx, total):
-                progress_q.put((idx, total))
 
             gc_enabled = gc.isenabled()
             if gc_enabled:
@@ -1131,16 +1121,16 @@ def main():
                         rigid_transform,
                         series_uid=used_fixed_uid,
                         base_series_uid=used_moving_uid,
-                        progress_callback=progress_cb,
+                        progress_callback=lambda _idx, _total: None,
                     )
                     result_state["success"] = True
                 except Exception as exc:
                     result_state["error"] = exc
                 finally:
-                    progress_q.put(None)
+                    output_q.put(None)
 
             if auto_approved:
-                progress_q = multiprocessing.Queue()
+                output_q = multiprocessing.Queue()
                 fd, transform_path = tempfile.mkstemp(suffix=".tfm")
                 os.close(fd)
                 sitk.WriteTransform(rigid_transform, transform_path)
@@ -1153,7 +1143,7 @@ def main():
                         rtplan_label,
                         used_fixed_uid,
                         used_moving_uid,
-                        progress_q,
+                        output_q,
                     ),
                     daemon=True,
                 )
@@ -1162,7 +1152,6 @@ def main():
                 threading.Thread(target=copy_worker, daemon=True).start()
 
             def finish_copy():
-                register_progress.grid_remove()
                 if gc_enabled:
                     gc.enable()
                     gc.collect()
@@ -1205,7 +1194,7 @@ def main():
             def poll_queue():
                 try:
                     while True:
-                        item = progress_q.get_nowait()
+                        item = output_q.get_nowait()
                         if item is None:
                             finish_copy()
                             return
@@ -1218,9 +1207,6 @@ def main():
                             if tag == "log":
                                 print(item[1], end="")
                                 continue
-                        idx, total = item
-                        register_progress["maximum"] = total
-                        register_progress["value"] = idx
                 except queue.Empty:
                     pass
                 root.after(100, poll_queue)
@@ -1256,9 +1242,6 @@ def main():
 
     copy_status = tk.Label(root, text="", font=("Helvetica", 14))
     copy_status.grid(row=15, column=1, sticky="w")
-
-    register_progress.grid(row=16, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
-    register_progress.grid_remove()
 
     send_status = tk.Label(root, text="", font=("Helvetica", 14))
     send_progress = ttk.Progressbar(root, length=200, mode="determinate")
