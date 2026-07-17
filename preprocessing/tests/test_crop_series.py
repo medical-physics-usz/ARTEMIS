@@ -236,16 +236,14 @@ def test_crop_keeps_roi_extent_padding_and_updates_references(
         ],
     )
 
-    result = crop_registered_series(
-        str(tmp_path), series_uid, str(rtstruct_path), in_plane_crop_pixels=100
-    )
+    result = crop_registered_series(str(tmp_path), series_uid, str(rtstruct_path))
 
     assert result.status == "cropped"
     assert result.roi_name == "PTV_TARGET+2CM_pH"
     assert result.retained_count == 8
     assert result.deleted_count == 2
     assert (result.original_rows, result.original_columns) == (256, 256)
-    assert (result.cropped_rows, result.cropped_columns) == (56, 56)
+    assert (result.cropped_rows, result.cropped_columns) == (64, 64)
     assert result.source_series_uid == series_uid
     assert result.derived_series_uid
     assert result.derived_series_uid != series_uid
@@ -272,14 +270,14 @@ def test_crop_keeps_roi_extent_padding_and_updates_references(
     original_pixels = (
         np.arange(256 * 256, dtype=np.int16).reshape(256, 256) + 4
     )
-    assert retained_image.pixel_array.shape == (56, 56)
+    assert retained_image.pixel_array.shape == (64, 64)
     np.testing.assert_array_equal(
         retained_image.pixel_array,
-        original_pixels[100:-100, 100:-100],
+        original_pixels[96:-96, 96:-96],
     )
     np.testing.assert_allclose(
         [float(value) for value in retained_image.ImagePositionPatient],
-        [-28.0, -28.0, 4.0],
+        [-32.0, -32.0, 4.0],
     )
     assert str(retained_image.SOPInstanceUID) != images[4][1]
     assert (
@@ -399,9 +397,7 @@ def test_crop_uses_oblique_slice_geometry(tmp_path: Path):
         ],
     )
 
-    result = crop_registered_series(
-        str(tmp_path), series_uid, str(rtstruct_path), in_plane_crop_pixels=100
-    )
+    result = crop_registered_series(str(tmp_path), series_uid, str(rtstruct_path))
 
     assert result.status == "cropped"
     assert result.retained_count == 6
@@ -414,7 +410,7 @@ def test_crop_uses_oblique_slice_geometry(tmp_path: Path):
     }
     cropped_header = pydicom.dcmread(images[3][0], stop_before_pixels=True)
     original_position = images[3][2]
-    expected_position = original_position + 100 * row + 100 * column
+    expected_position = original_position + 96 * row + 96 * column
     np.testing.assert_allclose(
         [float(value) for value in cropped_header.ImagePositionPatient],
         expected_position,
@@ -496,20 +492,18 @@ def test_in_plane_crop_preserves_pixel_representation(
         rois=[("PTV+2cm_Ph", [_contour(2), _contour(3)])],
     )
 
-    result = crop_registered_series(
-        str(tmp_path), series_uid, str(rtstruct_path), in_plane_crop_pixels=100
-    )
+    result = crop_registered_series(str(tmp_path), series_uid, str(rtstruct_path))
 
     assert result.status == "cropped"
-    assert (result.cropped_rows, result.cropped_columns) == (312, 312)
+    assert (result.cropped_rows, result.cropped_columns) == (320, 320)
     ds = pydicom.dcmread(images[2][0])
     dtype = np.int16 if signed else np.uint16
     expected = np.arange(512 * 512, dtype=dtype).reshape(512, 512) + 2
-    np.testing.assert_array_equal(ds.pixel_array, expected[100:-100, 100:-100])
+    np.testing.assert_array_equal(ds.pixel_array, expected[96:-96, 96:-96])
     assert int(ds.PixelRepresentation) == int(signed)
     np.testing.assert_allclose(
         [float(value) for value in ds.ImagePositionPatient],
-        [-312.0, -234.0, 2.0],
+        [-320.0, -240.0, 2.0],
     )
 
 
@@ -560,7 +554,7 @@ def test_non_target_contour_outside_reduced_fov_is_allowed(tmp_path: Path):
 
 def test_dimensions_must_exceed_twice_crop_amount(tmp_path: Path):
     series_uid, images = _write_image_series(
-        tmp_path, count=4, rows=200, columns=256
+        tmp_path, count=4, rows=192, columns=256
     )
     rtstruct_path = _write_rtstruct(
         tmp_path / "RS_small.dcm",
@@ -570,9 +564,7 @@ def test_dimensions_must_exceed_twice_crop_amount(tmp_path: Path):
     )
     before = _snapshot(tmp_path)
 
-    result = crop_registered_series(
-        str(tmp_path), series_uid, str(rtstruct_path), in_plane_crop_pixels=100
-    )
+    result = crop_registered_series(str(tmp_path), series_uid, str(rtstruct_path))
 
     assert result.status == "failed"
     assert "must both exceed" in result.error
