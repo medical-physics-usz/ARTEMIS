@@ -13,6 +13,7 @@ import numpy as np
 import pydicom
 from pydicom.dataset import Dataset
 from pydicom.sequence import Sequence
+from pydicom.uid import generate_uid
 
 from artemis_preprocessing.dicom.copy_structures import copy_structures
 from artemis_preprocessing.utils import get_datetime
@@ -30,6 +31,8 @@ class CropResult:
     original_columns: int | None = None
     cropped_rows: int | None = None
     cropped_columns: int | None = None
+    source_series_uid: str | None = None
+    derived_series_uid: str | None = None
     warning: str | None = None
     error: str | None = None
 
@@ -311,37 +314,50 @@ def _validate_target_in_plane(
             )
 
 
-def _image_reference(slice_info: _Slice) -> Dataset:
+def _image_reference(
+    slice_info: _Slice,
+    sop_uid_map: dict[str, str],
+) -> Dataset:
     reference = Dataset()
     reference.ReferencedSOPClassUID = slice_info.sop_class_uid
-    reference.ReferencedSOPInstanceUID = slice_info.sop_instance_uid
+    reference.ReferencedSOPInstanceUID = sop_uid_map[slice_info.sop_instance_uid]
     return reference
 
 
 def _update_rtstruct_references(
     rtstruct: Dataset,
     *,
-    series_uid: str,
+    source_series_uid: str,
+    derived_series_uid: str,
+    sop_uid_map: dict[str, str],
     slices: list[_Slice],
     normal: np.ndarray,
     first_kept: int,
     last_kept: int,
+    bind_unreferenced_contours: bool,
 ) -> Dataset:
     updated = copy.deepcopy(rtstruct)
     retained = slices[first_kept:last_kept + 1]
-    retained_references = Sequence([_image_reference(item) for item in retained])
+    retained_references = Sequence(
+        [_image_reference(item, sop_uid_map) for item in retained]
+    )
+    source_sop_uids = {item.sop_instance_uid for item in slices}
 
     matched_series = False
     for frame in getattr(updated, "ReferencedFrameOfReferenceSequence", []):
         for study in getattr(frame, "RTReferencedStudySequence", []):
             for series in getattr(study, "RTReferencedSeriesSequence", []):
-                if str(getattr(series, "SeriesInstanceUID", "")) != str(series_uid):
+                if str(getattr(series, "SeriesInstanceUID", "")) != str(
+                    source_series_uid
+                ):
                     continue
+                series.SeriesInstanceUID = derived_series_uid
                 series.ContourImageSequence = copy.deepcopy(retained_references)
                 matched_series = True
     if not matched_series:
         raise CropSeriesError(
-            f"RTSTRUCT does not contain a referenced-series entry for {series_uid}"
+            "RTSTRUCT does not contain a referenced-series entry for "
+            f"{source_series_uid}"
         )
 
     positions = np.asarray([item.position for item in slices], dtype=float)
@@ -352,6 +368,21 @@ def _update_rtstruct_references(
             continue
         kept_contours = []
         for contour in contours:
+            contour_references = getattr(contour, "ContourImageSequence", None)
+            referenced_source = bool(
+                contour_references
+                and any(
+                    str(getattr(reference, "ReferencedSOPInstanceUID", ""))
+                    in source_sop_uids
+                    for reference in contour_references
+                )
+            )
+            if contour_references and not referenced_source:
+                kept_contours.append(contour)
+                continue
+            if not contour_references and not bind_unreferenced_contours:
+                kept_contours.append(contour)
+                continue
             points = _contour_points(contour)
             contour_position = float(np.mean(points @ normal))
             if contour_position < coverage_start or contour_position > coverage_end:
@@ -359,16 +390,112 @@ def _update_rtstruct_references(
             index = _nearest_slice_index(positions, contour_position)
             if index < first_kept or index > last_kept:
                 continue
-            contour.ContourImageSequence = Sequence([_image_reference(slices[index])])
+            contour.ContourImageSequence = Sequence(
+                [_image_reference(slices[index], sop_uid_map)]
+            )
             kept_contours.append(contour)
         roi_contour.ContourSequence = Sequence(kept_contours)
     return updated
+
+
+def _dataset_references_series(
+    dataset: Dataset,
+    *,
+    series_uid: str,
+    sop_instance_uids: set[str],
+) -> bool:
+    """Return whether an RT object contains an image-series reference."""
+
+    for element in dataset.iterall():
+        if element.VR == "SQ":
+            continue
+        if (
+            element.keyword == "SeriesInstanceUID"
+            and str(element.value) == series_uid
+        ):
+            return True
+        if (
+            element.keyword == "ReferencedSOPInstanceUID"
+            and str(element.value) in sop_instance_uids
+        ):
+            return True
+    return False
+
+
+def _rewrite_reference_identifiers(
+    dataset: Dataset,
+    *,
+    source_series_uid: str,
+    derived_series_uid: str,
+    source_sop_uids: set[str],
+    sop_uid_map: dict[str, str],
+) -> None:
+    """Rewrite retained image references and remove references to deleted slices."""
+
+    for element in list(dataset):
+        if element.VR == "SQ":
+            retained_items = []
+            for item in element.value:
+                referenced_uid = str(
+                    getattr(item, "ReferencedSOPInstanceUID", "") or ""
+                )
+                if (
+                    referenced_uid in source_sop_uids
+                    and referenced_uid not in sop_uid_map
+                ):
+                    continue
+                _rewrite_reference_identifiers(
+                    item,
+                    source_series_uid=source_series_uid,
+                    derived_series_uid=derived_series_uid,
+                    source_sop_uids=source_sop_uids,
+                    sop_uid_map=sop_uid_map,
+                )
+                retained_items.append(item)
+            element.value = Sequence(retained_items)
+        elif (
+            element.keyword == "SeriesInstanceUID"
+            and str(element.value) == source_series_uid
+        ):
+            element.value = derived_series_uid
+        elif element.keyword == "ReferencedSOPInstanceUID":
+            replacement = sop_uid_map.get(str(element.value))
+            if replacement:
+                element.value = replacement
+
+
+def _load_affected_reference_objects(
+    directory: str,
+    *,
+    source_series_uid: str,
+    slices: list[_Slice],
+) -> dict[Path, Dataset]:
+    """Load all RTSTRUCT/REG objects that reference the source image series."""
+
+    source_sop_uids = {item.sop_instance_uid for item in slices}
+    affected: dict[Path, Dataset] = {}
+    for path in Path(directory).rglob("*.dcm"):
+        try:
+            dataset = pydicom.dcmread(str(path), stop_before_pixels=True)
+        except Exception:
+            continue
+        if str(getattr(dataset, "Modality", "")) not in {"RTSTRUCT", "REG"}:
+            continue
+        if _dataset_references_series(
+            dataset,
+            series_uid=source_series_uid,
+            sop_instance_uids=source_sop_uids,
+        ):
+            affected[path.resolve()] = dataset
+    return affected
 
 
 def _stage_cropped_slices(
     slices: list[_Slice],
     *,
     crop_pixels: int,
+    derived_series_uid: str,
+    sop_uid_map: dict[str, str],
     staging_directory: Path,
 ) -> list[tuple[Path, Path]]:
     staged: list[tuple[Path, Path]] = []
@@ -403,6 +530,16 @@ def _stage_cropped_slices(
             * slice_info.column_direction
         )
         ds.ImagePositionPatient = [f"{value:.10g}" for value in shifted_position]
+        ds.SeriesInstanceUID = derived_series_uid
+        ds.SOPInstanceUID = sop_uid_map[slice_info.sop_instance_uid]
+        ds.file_meta.MediaStorageSOPInstanceUID = ds.SOPInstanceUID
+        image_type = [str(value) for value in getattr(ds, "ImageType", [])]
+        if image_type:
+            image_type[0] = "DERIVED"
+        else:
+            image_type = ["DERIVED", "SECONDARY"]
+        ds.ImageType = image_type
+        ds.DerivationDescription = "Cropped from source image series"
         if "SmallestImagePixelValue" in ds:
             ds.SmallestImagePixelValue = int(np.min(cropped))
         if "LargestImagePixelValue" in ds:
@@ -418,15 +555,13 @@ def _commit_staged_crop(
     *,
     staged_files: list[tuple[Path, Path]],
     files_to_delete: list[Path],
-    staged_rtstruct: Path,
-    rtstruct_path: Path,
     working_directory: str,
 ) -> None:
     backup_directory = Path(
         tempfile.mkdtemp(prefix=".crop_backup_", dir=working_directory)
     )
-    replacements = [(staged_rtstruct, rtstruct_path), *staged_files]
-    originals = [rtstruct_path, *[path for _, path in staged_files], *files_to_delete]
+    replacements = staged_files
+    originals = [*[path for _, path in staged_files], *files_to_delete]
     moved: list[tuple[Path, Path]] = []
     preserve_backup = False
     try:
@@ -525,36 +660,65 @@ def crop_registered_series(
         if first_kept > last_kept:
             raise CropSeriesError("Calculated crop range is empty")
 
-        updated_rtstruct = _update_rtstruct_references(
-            rtstruct,
-            series_uid=series_uid,
-            slices=slices,
-            normal=normal,
-            first_kept=first_kept,
-            last_kept=last_kept,
-        )
         to_delete = slices[:first_kept] + slices[last_kept + 1:]
         retained_slices = slices[first_kept:last_kept + 1]
+        derived_series_uid = generate_uid()
+        sop_uid_map = {
+            item.sop_instance_uid: generate_uid() for item in retained_slices
+        }
+        source_sop_uids = {item.sop_instance_uid for item in slices}
+        affected_objects = _load_affected_reference_objects(
+            current_directory,
+            source_series_uid=series_uid,
+            slices=slices,
+        )
+        resolved_rtstruct_path = Path(rtstruct_path).resolve()
+        if resolved_rtstruct_path not in affected_objects:
+            raise CropSeriesError(
+                f"RTSTRUCT does not reference source image series {series_uid}"
+            )
+
         staging_directory = Path(
             tempfile.mkdtemp(prefix=".crop_staging_", dir=current_directory)
         )
         try:
-            staged_rtstruct = staging_directory / "rtstruct.tmp"
-            pydicom.dcmwrite(
-                staged_rtstruct,
-                updated_rtstruct,
-                write_like_original=False,
-            )
+            staged_reference_files = []
+            for index, (path, dataset) in enumerate(affected_objects.items()):
+                if str(getattr(dataset, "Modality", "")) == "RTSTRUCT":
+                    updated = _update_rtstruct_references(
+                        dataset,
+                        source_series_uid=series_uid,
+                        derived_series_uid=derived_series_uid,
+                        sop_uid_map=sop_uid_map,
+                        slices=slices,
+                        normal=normal,
+                        first_kept=first_kept,
+                        last_kept=last_kept,
+                        bind_unreferenced_contours=path == resolved_rtstruct_path,
+                    )
+                else:
+                    updated = copy.deepcopy(dataset)
+                _rewrite_reference_identifiers(
+                    updated,
+                    source_series_uid=series_uid,
+                    derived_series_uid=derived_series_uid,
+                    source_sop_uids=source_sop_uids,
+                    sop_uid_map=sop_uid_map,
+                )
+                staged_path = staging_directory / f"reference_{index:06d}.tmp"
+                pydicom.dcmwrite(staged_path, updated, write_like_original=False)
+                staged_reference_files.append((staged_path, path))
+
             staged_files = _stage_cropped_slices(
                 retained_slices,
                 crop_pixels=in_plane_crop_pixels,
+                derived_series_uid=derived_series_uid,
+                sop_uid_map=sop_uid_map,
                 staging_directory=staging_directory,
             )
             _commit_staged_crop(
-                staged_files=staged_files,
+                staged_files=[*staged_reference_files, *staged_files],
                 files_to_delete=[item.path for item in to_delete],
-                staged_rtstruct=staged_rtstruct,
-                rtstruct_path=Path(rtstruct_path),
                 working_directory=current_directory,
             )
         finally:
@@ -570,6 +734,8 @@ def crop_registered_series(
             original_columns=original_columns,
             cropped_rows=cropped_rows,
             cropped_columns=cropped_columns,
+            source_series_uid=str(series_uid),
+            derived_series_uid=derived_series_uid,
         )
     except Exception as exc:
         return CropResult(status="failed", error=str(exc))

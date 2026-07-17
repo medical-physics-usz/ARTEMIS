@@ -168,6 +168,34 @@ def _write_rtstruct(
     return path
 
 
+def _write_reg(path: Path, *, series_uid: str, image_records) -> Path:
+    ds = _file_dataset(path, "1.2.840.10008.5.1.4.1.1.66.1", generate_uid())
+    ds.Modality = "REG"
+    ds.SeriesInstanceUID = generate_uid()
+    ds.StudyInstanceUID = generate_uid()
+
+    referenced_series = Dataset()
+    referenced_series.SeriesInstanceUID = series_uid
+    referenced_series.ReferencedInstanceSequence = Sequence()
+    for _, sop_uid, _ in image_records:
+        reference = Dataset()
+        reference.ReferencedSOPClassUID = CTImageStorage
+        reference.ReferencedSOPInstanceUID = sop_uid
+        referenced_series.ReferencedInstanceSequence.append(reference)
+    ds.ReferencedSeriesSequence = Sequence([referenced_series])
+
+    registration = Dataset()
+    registration.ReferencedImageSequence = Sequence()
+    for _, sop_uid, _ in image_records:
+        reference = Dataset()
+        reference.ReferencedSOPClassUID = CTImageStorage
+        reference.ReferencedSOPInstanceUID = sop_uid
+        registration.ReferencedImageSequence.append(reference)
+    ds.RegistrationSequence = Sequence([registration])
+    pydicom.dcmwrite(path, ds, enforce_file_format=True)
+    return path
+
+
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -208,7 +236,9 @@ def test_crop_keeps_roi_extent_padding_and_updates_references(
         ],
     )
 
-    result = crop_registered_series(str(tmp_path), series_uid, str(rtstruct_path))
+    result = crop_registered_series(
+        str(tmp_path), series_uid, str(rtstruct_path), in_plane_crop_pixels=100
+    )
 
     assert result.status == "cropped"
     assert result.roi_name == "PTV_TARGET+2CM_pH"
@@ -216,7 +246,11 @@ def test_crop_keeps_roi_extent_padding_and_updates_references(
     assert result.deleted_count == 2
     assert (result.original_rows, result.original_columns) == (256, 256)
     assert (result.cropped_rows, result.cropped_columns) == (56, 56)
-    assert len(_series_files(tmp_path, series_uid)) == 8
+    assert result.source_series_uid == series_uid
+    assert result.derived_series_uid
+    assert result.derived_series_uid != series_uid
+    assert len(_series_files(tmp_path, series_uid)) == 0
+    assert len(_series_files(tmp_path, result.derived_series_uid)) == 8
     assert len(_series_files(tmp_path, other_uid)) == len(other_images) == 3
 
     updated = pydicom.dcmread(rtstruct_path)
@@ -229,8 +263,10 @@ def test_crop_keeps_roi_extent_padding_and_updates_references(
         str(item.ReferencedSOPInstanceUID)
         for item in ref_series.ContourImageSequence
     }
-    expected_uids = {images[index][1] for index in range(1, 9)}
-    assert retained_uids == expected_uids
+    original_retained_uids = {images[index][1] for index in range(1, 9)}
+    assert retained_uids.isdisjoint(original_retained_uids)
+    assert len(retained_uids) == 8
+    assert str(ref_series.SeriesInstanceUID) == result.derived_series_uid
 
     retained_image = pydicom.dcmread(images[4][0])
     original_pixels = (
@@ -245,8 +281,13 @@ def test_crop_keeps_roi_extent_padding_and_updates_references(
         [float(value) for value in retained_image.ImagePositionPatient],
         [-28.0, -28.0, 4.0],
     )
-    assert str(retained_image.SOPInstanceUID) == images[4][1]
-    assert str(retained_image.SeriesInstanceUID) == series_uid
+    assert str(retained_image.SOPInstanceUID) != images[4][1]
+    assert (
+        str(retained_image.file_meta.MediaStorageSOPInstanceUID)
+        == str(retained_image.SOPInstanceUID)
+    )
+    assert str(retained_image.SeriesInstanceUID) == result.derived_series_uid
+    assert retained_image.ImageType[0] == "DERIVED"
 
     organ_contours = updated.ROIContourSequence[1].ContourSequence
     assert len(organ_contours) == 1
@@ -257,6 +298,81 @@ def test_crop_keeps_roi_extent_padding_and_updates_references(
                 str(contour.ContourImageSequence[0].ReferencedSOPInstanceUID)
                 in retained_uids
             )
+
+
+def test_crop_updates_every_rtstruct_and_reg_reference(tmp_path: Path):
+    series_uid, images = _write_image_series(tmp_path)
+    rtstruct_path = _write_rtstruct(
+        tmp_path / "RS_target.dcm",
+        series_uid=series_uid,
+        image_records=images,
+        rois=[("PTV+2cm_Ph", [_contour(3), _contour(6)])],
+    )
+    other_rtstruct_path = _write_rtstruct(
+        tmp_path / "RS_other.dcm",
+        series_uid=series_uid,
+        image_records=images,
+        rois=[("Organ", [_contour(0), _contour(4)])],
+    )
+    other_rtstruct = pydicom.dcmread(other_rtstruct_path)
+    for contour, image_index in zip(
+        other_rtstruct.ROIContourSequence[0].ContourSequence, [0, 4]
+    ):
+        reference = Dataset()
+        reference.ReferencedSOPClassUID = CTImageStorage
+        reference.ReferencedSOPInstanceUID = images[image_index][1]
+        contour.ContourImageSequence = Sequence([reference])
+    pydicom.dcmwrite(other_rtstruct_path, other_rtstruct, enforce_file_format=True)
+    reg_path = _write_reg(
+        tmp_path / "REG_test.dcm",
+        series_uid=series_uid,
+        image_records=images,
+    )
+
+    result = crop_registered_series(str(tmp_path), series_uid, str(rtstruct_path))
+
+    assert result.status == "cropped"
+    derived_image_uids = {
+        str(pydicom.dcmread(path, stop_before_pixels=True).SOPInstanceUID)
+        for path in _series_files(tmp_path, result.derived_series_uid)
+    }
+    original_image_uids = {record[1] for record in images}
+    assert len(derived_image_uids) == 8
+    assert derived_image_uids.isdisjoint(original_image_uids)
+
+    for path in [rtstruct_path, other_rtstruct_path]:
+        updated_rtstruct = pydicom.dcmread(path)
+        referenced_series = (
+            updated_rtstruct.ReferencedFrameOfReferenceSequence[0]
+            .RTReferencedStudySequence[0]
+            .RTReferencedSeriesSequence[0]
+        )
+        assert str(referenced_series.SeriesInstanceUID) == result.derived_series_uid
+        assert {
+            str(item.ReferencedSOPInstanceUID)
+            for item in referenced_series.ContourImageSequence
+        } == derived_image_uids
+
+    updated_other = pydicom.dcmread(other_rtstruct_path)
+    remaining_contours = updated_other.ROIContourSequence[0].ContourSequence
+    assert len(remaining_contours) == 1
+    assert (
+        str(remaining_contours[0].ContourImageSequence[0].ReferencedSOPInstanceUID)
+        in derived_image_uids
+    )
+
+    updated_reg = pydicom.dcmread(reg_path)
+    assert (
+        str(updated_reg.ReferencedSeriesSequence[0].SeriesInstanceUID)
+        == result.derived_series_uid
+    )
+    for sequence in [
+        updated_reg.ReferencedSeriesSequence[0].ReferencedInstanceSequence,
+        updated_reg.RegistrationSequence[0].ReferencedImageSequence,
+    ]:
+        assert {str(item.ReferencedSOPInstanceUID) for item in sequence} == (
+            derived_image_uids
+        )
 
 
 def test_crop_uses_oblique_slice_geometry(tmp_path: Path):
@@ -283,12 +399,17 @@ def test_crop_uses_oblique_slice_geometry(tmp_path: Path):
         ],
     )
 
-    result = crop_registered_series(str(tmp_path), series_uid, str(rtstruct_path))
+    result = crop_registered_series(
+        str(tmp_path), series_uid, str(rtstruct_path), in_plane_crop_pixels=100
+    )
 
     assert result.status == "cropped"
     assert result.retained_count == 6
     assert result.deleted_count == 3
-    assert {path.name for path in _series_files(tmp_path, series_uid)} == {
+    assert not _series_files(tmp_path, series_uid)
+    assert {
+        path.name for path in _series_files(tmp_path, result.derived_series_uid)
+    } == {
         images[index][0].name for index in range(1, 7)
     }
     cropped_header = pydicom.dcmread(images[3][0], stop_before_pixels=True)
@@ -375,7 +496,9 @@ def test_in_plane_crop_preserves_pixel_representation(
         rois=[("PTV+2cm_Ph", [_contour(2), _contour(3)])],
     )
 
-    result = crop_registered_series(str(tmp_path), series_uid, str(rtstruct_path))
+    result = crop_registered_series(
+        str(tmp_path), series_uid, str(rtstruct_path), in_plane_crop_pixels=100
+    )
 
     assert result.status == "cropped"
     assert (result.cropped_rows, result.cropped_columns) == (312, 312)
@@ -447,7 +570,9 @@ def test_dimensions_must_exceed_twice_crop_amount(tmp_path: Path):
     )
     before = _snapshot(tmp_path)
 
-    result = crop_registered_series(str(tmp_path), series_uid, str(rtstruct_path))
+    result = crop_registered_series(
+        str(tmp_path), series_uid, str(rtstruct_path), in_plane_crop_pixels=100
+    )
 
     assert result.status == "failed"
     assert "must both exceed" in result.error
@@ -539,6 +664,11 @@ def test_replacement_failure_rolls_back_all_files(tmp_path: Path, monkeypatch):
         series_uid=series_uid,
         image_records=images,
         rois=[("PTV+2cm_Ph", [_contour(3), _contour(5)])],
+    )
+    _write_reg(
+        tmp_path / "REG_rollback.dcm",
+        series_uid=series_uid,
+        image_records=images,
     )
     before = _snapshot(tmp_path)
     real_replace = os.replace

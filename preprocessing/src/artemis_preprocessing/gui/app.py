@@ -1185,6 +1185,7 @@ def main():
                 threading.Thread(target=copy_worker, daemon=True).start()
 
             def finish_copy():
+                nonlocal last_fixed_uid
                 register_progress.grid_remove()
                 if gc_enabled:
                     gc.enable()
@@ -1198,9 +1199,18 @@ def main():
                         pass
                 if result_state.get("error") is None and not result_state.get("success"):
                     result_state["success"] = True
+                crop_result = result_state.get("crop_result") or {}
+                derived_series_uid = (
+                    crop_result.get("derived_series_uid")
+                    if crop_result.get("status") == "cropped"
+                    else None
+                )
                 if result_state.get("success"):
                     if used_fixed_uid:
                         aria_blocked_series_uids.discard(used_fixed_uid)
+                    if derived_series_uid:
+                        last_fixed_uid = derived_series_uid
+                        aria_blocked_series_uids.discard(derived_series_uid)
                     copy_status.config(text="\u2705", fg="green")
                 else:
                     if used_fixed_uid:
@@ -1228,8 +1238,12 @@ def main():
                     automation_state["registration_completed"] = True
                     automation_state["registration_successful"] = registration_was_successful
                 if used_fixed_uid:
-                    aria_refresh_required_uids.add(used_fixed_uid)
                     crop_in_progress_uids.discard(used_fixed_uid)
+                    if derived_series_uid:
+                        aria_refresh_required_uids.discard(used_fixed_uid)
+                        aria_refresh_required_uids.add(derived_series_uid)
+                    else:
+                        aria_refresh_required_uids.add(used_fixed_uid)
                 on_get_images()
 
             def poll_queue():
