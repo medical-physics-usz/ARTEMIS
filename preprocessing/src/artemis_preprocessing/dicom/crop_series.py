@@ -460,7 +460,7 @@ def crop_registered_series(
     *,
     roi_suffix: str = "+2cm_Ph",
     padding_slices: int = 2,
-    in_plane_crop_pixels: int = 100,
+    in_plane_crop_pixels: int = 96,
 ) -> CropResult:
     """Crop *series_uid* to a uniquely matching contoured ROI.
 
