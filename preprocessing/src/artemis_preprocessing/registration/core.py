@@ -1356,6 +1356,24 @@ class MultiViewOverlay:
             self.slice_x = np.clip(self.slice_x + delta, 0, self.fixed.shape[2] - 1)
         self.update_display()
 
+
+# Matplotlib retains figures displayed with ``block=False``, but its event
+# registry keeps bound-method callbacks weakly. Keep the object that owns the
+# slider and scroll callbacks alive until its figure is closed.
+_ACTIVE_NONBLOCKING_VIEWERS: dict[int, MultiViewOverlay] = {}
+
+
+def _retain_nonblocking_viewer(viewer: MultiViewOverlay) -> None:
+    """Keep *viewer* interactive until Matplotlib reports its window closed."""
+
+    viewer_key = id(viewer.fig)
+    _ACTIVE_NONBLOCKING_VIEWERS[viewer_key] = viewer
+
+    def release_viewer(_event) -> None:
+        _ACTIVE_NONBLOCKING_VIEWERS.pop(viewer_key, None)
+
+    viewer.fig.canvas.mpl_connect("close_event", release_viewer)
+
 # --------------------------------------------------------------------
 # Main
 # --------------------------------------------------------------------
@@ -1422,5 +1440,7 @@ def run_viewer(
             color="green",
             weight="bold",
         )
+    if not block:
+        _retain_nonblocking_viewer(overlay)
     overlay.show(block=block)
-    return None
+    return overlay
