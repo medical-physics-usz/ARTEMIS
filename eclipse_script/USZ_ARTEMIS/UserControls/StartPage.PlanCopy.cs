@@ -5,6 +5,8 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
+using USZ_ARTEMIS.Core.Planning;
+using USZ_ARTEMIS.DataQualification;
 using USZ_ARTEMIS.StructureCreation;
 using VMS.TPS.Common.Model.API;
 using VMS.TPS.Common.Model.Types;
@@ -398,16 +400,44 @@ namespace USZ_ARTEMIS
             }
 
             var ptvPlus2cm = matches[0];
-            foreach (var beam in copiedPlan.Beams.Where(b => !b.Id.Contains("Setup")))
+            bool requiresManualJawAndApertureAdjustment = false;
+            PlanCopyApertureSafety apertureSafety;
+            try
             {
-                beam.FitCollimatorToStructure(new FitToStructureMargins(0, 0, 0, 0), ptvPlus2cm, true, true, false);
-                if (beam.ControlPoints.Count > 2)
-                {
-                    beam.FitArcOptimizationApertureToCollimatorJaws();
-                }
+                var ptvsOutsideRing = DataChecker.FindPtvsOutsideStructure(
+                    copiedPlan.StructureSet,
+                    ptvPlus2cm);
+                apertureSafety = PlanCopyApertureSafety.FromContainmentCheck(
+                    ptvPlus2cm.Id,
+                    ptvsOutsideRing.Select(ptv => ptv.Id));
+            }
+            catch (Exception ex)
+            {
+                apertureSafety = PlanCopyApertureSafety.FromFailedCheck(ptvPlus2cm.Id, ex.Message);
             }
 
-            MessageBox.Show("Jaws adjusted to PTV+2cm_Ph and arc apertures set to jaws!", "Done", MessageBoxButton.OK, MessageBoxImage.Information);
+            if (apertureSafety.AllowAutomaticOptimization)
+            {
+                foreach (var beam in copiedPlan.Beams.Where(b => !b.Id.Contains("Setup")))
+                {
+                    beam.FitCollimatorToStructure(new FitToStructureMargins(0, 0, 0, 0), ptvPlus2cm, true, true, false);
+                    if (beam.ControlPoints.Count > 2)
+                    {
+                        beam.FitArcOptimizationApertureToCollimatorJaws();
+                    }
+                }
+
+                MessageBox.Show("Jaws adjusted to PTV+2cm_Ph and arc apertures set to jaws!", "Done", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            else
+            {
+                requiresManualJawAndApertureAdjustment = true;
+                MessageBox.Show(
+                    apertureSafety.WarningMessage,
+                    "PTV and +2 cm ring warning",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
 
             var structureLookup = copiedPlan.StructureSet.Structures
                 .Where(structure => !structure.IsEmpty && !string.IsNullOrWhiteSpace(structure.Id))
@@ -486,7 +516,18 @@ namespace USZ_ARTEMIS
                     MessageBoxImage.Error);
             }
 
-            MessageBox.Show("Success!");
+            if (requiresManualJawAndApertureAdjustment)
+            {
+                MessageBox.Show(
+                    "Plan copied. Automatic jaw and aperture optimization was skipped; manual adjustment is required.",
+                    "Plan Copy Complete",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
+            else
+            {
+                MessageBox.Show("Success!");
+            }
         }
 
         private void cbMachine_SelectionChanged(object sender, SelectionChangedEventArgs e)
