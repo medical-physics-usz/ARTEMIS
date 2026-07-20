@@ -10,16 +10,17 @@ namespace USZ_ARTEMIS.Actions
 {
     partial class Rules
     {
-        public static void ApplyRules(PlanSetup SelectedPlan, string rulesPath)
+        public static void ApplyRules(PlanSetup targetPlan, PlanSetup rulesSourcePlan)
         {
-            string path = ResolveRulesFilePath(SelectedPlan, rulesPath, "apply");
+            string rulesPath = RetrieveRulesFile(rulesSourcePlan);
+            string path = ResolveRulesFilePath(rulesSourcePlan, rulesPath, "apply");
             if (path == null)
             {
                 return;
             }
 
-            var ruleSet = LoadRulesFromPath(path, SelectedPlan);
-            StructureSet structureSet = SelectedPlan.StructureSet;
+            var ruleSet = LoadRulesFromPath(path, targetPlan);
+            StructureSet structureSet = targetPlan.StructureSet;
             var toDelete = structureSet.Structures
                 .Where(s =>
                     s.Id.EndsWith("_ph", StringComparison.OrdinalIgnoreCase) &&
@@ -46,7 +47,7 @@ namespace USZ_ARTEMIS.Actions
                     string outputId = rule.OutputStructure;
                     if (!string.IsNullOrEmpty(outputId))
                     {
-                        var outStruct = SelectedPlan.StructureSet.Structures
+                        var outStruct = targetPlan.StructureSet.Structures
                             .FirstOrDefault(s => s.Id.Equals(outputId, StringComparison.OrdinalIgnoreCase));
 
                         if (outStruct != null && outStruct.IsApproved)
@@ -63,7 +64,7 @@ namespace USZ_ARTEMIS.Actions
                             {
                                 string inId = rule.InputStructures[0];
                                 string marginStr = (rule.MarginMm ?? 0).ToString(CultureInfo.InvariantCulture);
-                                ApplyExpansion(SelectedPlan, inId, marginStr, rule.OutputStructure);
+                                ApplyExpansion(targetPlan, inId, marginStr, rule.OutputStructure);
                             }
                             break;
 
@@ -72,7 +73,7 @@ namespace USZ_ARTEMIS.Actions
                             {
                                 string inId = rule.InputStructures[0];
                                 string marginStr = (rule.MarginMm ?? 0).ToString(CultureInfo.InvariantCulture);
-                                ApplyMorphologicalOpening(SelectedPlan, inId, marginStr, rule.OutputStructure);
+                                ApplyMorphologicalOpening(targetPlan, inId, marginStr, rule.OutputStructure);
                             }
                             break;
 
@@ -83,40 +84,40 @@ namespace USZ_ARTEMIS.Actions
                                 rule.AsymmetricMarginsMm.Length == 6)
                             {
                                 string inId = rule.InputStructures[0];
-                                ApplyAsymmetricExpansion(SelectedPlan, inId, rule.OutputStructure, rule.AsymmetricMarginsMm);
+                                ApplyAsymmetricExpansion(targetPlan, inId, rule.OutputStructure, rule.AsymmetricMarginsMm);
                             }
                             break;
 
                         case RuleType.Subtraction:
                             if (rule.InputStructures.Count >= 2 && !string.IsNullOrEmpty(rule.OutputStructure))
                             {
-                                ApplySubtractionMulti(SelectedPlan, rule.OutputStructure, rule.InputStructures);
+                                ApplySubtractionMulti(targetPlan, rule.OutputStructure, rule.InputStructures);
                             }
                             break;
 
                         case RuleType.Addition:
                             if (rule.InputStructures.Count >= 2 && !string.IsNullOrEmpty(rule.OutputStructure))
                             {
-                                ApplyAdditionMulti(SelectedPlan, rule.OutputStructure, rule.InputStructures);
+                                ApplyAdditionMulti(targetPlan, rule.OutputStructure, rule.InputStructures);
                             }
                             break;
 
                         case RuleType.Intersection:
                             if (rule.InputStructures.Count >= 2 && !string.IsNullOrEmpty(rule.OutputStructure))
                             {
-                                ApplyIntersectionMulti(SelectedPlan, rule.OutputStructure, rule.InputStructures);
+                                ApplyIntersectionMulti(targetPlan, rule.OutputStructure, rule.InputStructures);
                             }
                             break;
 
                         case RuleType.SbrtRing:
                             if (rule.InputStructures.Count == 2)
                             {
-                                ApplySbrtRing(SelectedPlan, rule.InputStructures[0], rule.InputStructures[1]);
+                                ApplySbrtRing(targetPlan, rule.InputStructures[0], rule.InputStructures[1]);
                             }
                             break;
 
                         case RuleType.RectalWall:
-                            ApplyRectalWall(SelectedPlan);
+                            ApplyRectalWall(targetPlan);
                             break;
                     }
                 }

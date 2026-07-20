@@ -316,8 +316,7 @@ namespace USZ_ARTEMIS
                 }
             }
 
-            string rulesFilePath = Actions.Rules.RetrieveRulesFile(originalPlan);
-            Actions.Rules.ApplyRules(copiedPlan, rulesFilePath);
+            Actions.Rules.ApplyRules(copiedPlan, originalPlan);
 
             var target = copiedPlan.StructureSet.Structures.FirstOrDefault(s => s.Id == copiedPlan.TargetVolumeID);
             if (target == null)
