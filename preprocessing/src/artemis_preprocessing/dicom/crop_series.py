@@ -34,6 +34,9 @@ class CropResult:
     source_series_uid: str | None = None
     derived_series_uid: str | None = None
     warning: str | None = None
+    warning_code: str | None = None
+    caudal_missing_mm: float = 0.0
+    cranial_missing_mm: float = 0.0
     error: str | None = None
 
     def to_dict(self) -> dict:
@@ -643,9 +646,27 @@ def crop_registered_series(
             return CropResult(status="skipped", roi_name=roi_name, warning=warning)
 
         coverage_start, coverage_end = _series_coverage(positions)
-        if min(projected_points) < coverage_start or max(projected_points) > coverage_end:
-            raise CropSeriesError(
-                f"ROI '{roi_name}' extends outside the referenced image series"
+        target_start = min(projected_points)
+        target_end = max(projected_points)
+        if target_start < coverage_start or target_end > coverage_end:
+            lower_missing = max(0.0, coverage_start - target_start)
+            upper_missing = max(0.0, target_end - coverage_end)
+            if normal[2] >= 0:
+                caudal_missing, cranial_missing = lower_missing, upper_missing
+            else:
+                caudal_missing, cranial_missing = upper_missing, lower_missing
+            warning = (
+                f"ROI '{roi_name}' extends outside the referenced image series; "
+                "leaving the image series unchanged"
+            )
+            return CropResult(
+                status="skipped",
+                roi_name=roi_name,
+                source_series_uid=str(series_uid),
+                warning=warning,
+                warning_code="insufficient_longitudinal_coverage",
+                caudal_missing_mm=caudal_missing,
+                cranial_missing_mm=cranial_missing,
             )
         _validate_target_in_plane(
             roi_contour,

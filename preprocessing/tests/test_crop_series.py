@@ -524,6 +524,48 @@ def test_padding_clamps_to_series_boundary(tmp_path: Path):
 
 
 @pytest.mark.parametrize(
+    "iop, contours, expected_caudal, expected_cranial",
+    [
+        ((1, 0, 0, 0, 1, 0), (-2, 12), 1.5, 2.5),
+        ((-1, 0, 0, 0, 1, 0), (-2, 12), 2.5, 1.5),
+    ],
+)
+def test_longitudinal_shortfall_skips_crop_and_reports_patient_directions(
+    tmp_path: Path,
+    iop,
+    contours,
+    expected_caudal: float,
+    expected_cranial: float,
+):
+    series_uid, images = _write_image_series(tmp_path, iop=iop)
+    normal = np.cross(np.asarray(iop[:3]), np.asarray(iop[3:]))
+    rtstruct_path = _write_rtstruct(
+        tmp_path / "RS_short_coverage.dcm",
+        series_uid=series_uid,
+        image_records=images,
+        rois=[
+            (
+                "PTV+2cm_Ph",
+                [
+                    _contour(position, normal=normal)
+                    for position in contours
+                ],
+            )
+        ],
+    )
+    before = _snapshot(tmp_path)
+
+    result = crop_registered_series(str(tmp_path), series_uid, str(rtstruct_path))
+
+    assert result.status == "skipped"
+    assert result.warning_code == "insufficient_longitudinal_coverage"
+    assert result.caudal_missing_mm == pytest.approx(expected_caudal)
+    assert result.cranial_missing_mm == pytest.approx(expected_cranial)
+    assert result.source_series_uid == series_uid
+    assert _snapshot(tmp_path) == before
+
+
+@pytest.mark.parametrize(
     "signed, modality",
     [(True, "CT"), (False, "MR")],
 )
