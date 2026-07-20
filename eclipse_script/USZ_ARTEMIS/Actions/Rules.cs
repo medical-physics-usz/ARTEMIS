@@ -1853,36 +1853,36 @@ namespace USZ_ARTEMIS.Actions
                         if (!AddLymphNodeTargetsToRuleSet(selectedPlan, ruleSet, ptvMarginMm: 5.0, out string gtvId, out string ptvId))
                             return;
 
-                        ruleSet.Rules.Add(new StructureRule
-                        {
-                            Type = RuleType.Expansion,
-                            InputStructures = new List<string> { "Bowel" },
-                            OutputStructure = "Bowel+2mm_Ph",
-                            MarginMm = 2.0
-                        });
-
-                        ruleSet.Rules.Add(new StructureRule
-                        {
-                            Type = RuleType.Expansion,
-                            InputStructures = new List<string> { "Bowel" },
-                            OutputStructure = "Bowel+4mm_Ph",
-                            MarginMm = 4.0
-                        });
-
-                        // Sigma and rectum union
+                        // Sigma and bowel union
                         ruleSet.Rules.Add(new StructureRule
                         {
                             Type = RuleType.Addition,
-                            InputStructures = new List<string> { "Sigma", "Rectum" },
-                            OutputStructure = "Sigma+Rectum_Ph"
+                            InputStructures = new List<string> { "Sigma", "Bowel" },
+                            OutputStructure = "Sigma+Bowel_Ph"
                         });
 
-                        // 2 mm expansion of sigma and rectum
+                        // 2 mm and 4 mm expansions of sigma and bowel
                         ruleSet.Rules.Add(new StructureRule
                         {
                             Type = RuleType.Expansion,
-                            InputStructures = new List<string> { "Sigma+Rectum_Ph" },
-                            OutputStructure = "Sigma+Rectum+2mm_Ph",
+                            InputStructures = new List<string> { "Sigma+Bowel_Ph" },
+                            OutputStructure = "Sigma+Bowel+2mm_Ph",
+                            MarginMm = 2.0
+                        });
+                        ruleSet.Rules.Add(new StructureRule
+                        {
+                            Type = RuleType.Expansion,
+                            InputStructures = new List<string> { "Sigma+Bowel_Ph" },
+                            OutputStructure = "Sigma+Bowel+4mm_Ph",
+                            MarginMm = 4.0
+                        });
+
+                        // 2 mm expansion of rectum
+                        ruleSet.Rules.Add(new StructureRule
+                        {
+                            Type = RuleType.Expansion,
+                            InputStructures = new List<string> { "Rectum" },
+                            OutputStructure = "Rectum+2mm_Ph",
                             MarginMm = 2.0
                         });
 
@@ -1890,7 +1890,7 @@ namespace USZ_ARTEMIS.Actions
                         ruleSet.Rules.Add(new StructureRule
                         {
                             Type = RuleType.Subtraction,
-                            InputStructures = new List<string> { gtvId, "Bowel+4mm_Ph" , "Sigma+Rectum+2mm_Ph" },
+                            InputStructures = new List<string> { gtvId, "Sigma+Bowel+4mm_Ph", "Rectum+2mm_Ph" },
                             OutputStructure = gtvId.Substring(0, gtvId.Length - 3) + "_crop_Ph"
                         });
 
@@ -1898,7 +1898,7 @@ namespace USZ_ARTEMIS.Actions
                         ruleSet.Rules.Add(new StructureRule
                         {
                             Type = RuleType.Subtraction,
-                            InputStructures = new List<string> { ptvId, "Bowel+2mm_Ph", "Sigma", "Rectum" },
+                            InputStructures = new List<string> { ptvId, "Sigma+Bowel+2mm_Ph", "Rectum" },
                             OutputStructure = ptvId.Substring(0, ptvId.Length - 3) + "_crop_Ph"
                         });
 
