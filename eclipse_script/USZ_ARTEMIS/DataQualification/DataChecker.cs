@@ -61,6 +61,85 @@ namespace USZ_ARTEMIS.DataQualification
             }
         }
 
+        public static List<Structure> FindPtvsOutsideStructure(StructureSet structureSet, Structure containingStructure)
+        {
+            if (structureSet == null)
+            {
+                throw new ArgumentNullException(nameof(structureSet));
+            }
+            if (containingStructure == null || containingStructure.IsEmpty)
+            {
+                throw new Exception("The containing +2 cm ring is missing or empty.");
+            }
+
+            var ptvs = structureSet.Structures
+                .Where(structure =>
+                    !structure.IsEmpty &&
+                    !string.IsNullOrWhiteSpace(structure.DicomType) &&
+                    structure.DicomType.Equals("PTV", StringComparison.OrdinalIgnoreCase))
+                .OrderBy(structure => structure.Id)
+                .ToList();
+
+            if (ptvs.Count == 0)
+            {
+                throw new Exception("No non-empty PTV structures were found.");
+            }
+
+            var ptvsOutsideStructure = new List<Structure>();
+            foreach (var ptv in ptvs)
+            {
+                Structure differenceStructure = null;
+                try
+                {
+                    // Checking each PTV separately is equivalent to subtracting the ring from
+                    // their union, and lets the warning identify the affected structures.
+                    string differenceStructureId = GetTemporaryStructureId(structureSet, "zPtvRingCheck");
+                    differenceStructure = structureSet.AddStructure("CONTROL", differenceStructureId);
+
+                    if (ptv.IsHighResolution && differenceStructure.CanConvertToHighResolution())
+                    {
+                        differenceStructure.ConvertToHighResolution();
+                    }
+
+                    differenceStructure.SegmentVolume = ptv.Sub(containingStructure);
+                    if (!differenceStructure.IsEmpty)
+                    {
+                        ptvsOutsideStructure.Add(ptv);
+                    }
+                }
+                finally
+                {
+                    if (differenceStructure != null)
+                    {
+                        structureSet.RemoveStructure(differenceStructure);
+                    }
+                }
+            }
+
+            return ptvsOutsideStructure;
+        }
+
+        private static string GetTemporaryStructureId(StructureSet structureSet, string baseId)
+        {
+            string candidate = baseId;
+            while (structureSet.Structures.Any(structure =>
+                structure.Id.Equals(candidate, StringComparison.OrdinalIgnoreCase)))
+            {
+                if (candidate.Length >= 16)
+                {
+                    throw new Exception("Could not create a temporary structure for the PTV containment check.");
+                }
+                candidate += "Z";
+            }
+
+            if (!structureSet.CanAddStructure("CONTROL", candidate))
+            {
+                throw new Exception("Could not create a temporary structure for the PTV containment check.");
+            }
+
+            return candidate;
+        }
+
         public static bool CouchInsideBody(StructureSet structureSet)
         {
             string structureDicomType = "CONTROL";

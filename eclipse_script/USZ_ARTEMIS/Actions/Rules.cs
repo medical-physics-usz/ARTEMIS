@@ -1675,6 +1675,14 @@ namespace USZ_ARTEMIS.Actions
                             OutputStructure = ptv1Id + "_crop_Ph"
                         });
 
+                        // PTV1-CTV1 generation
+                        ruleSet.Rules.Add(new StructureRule
+                        {
+                            Type = RuleType.Subtraction,
+                            InputStructures = new List<string> { ptv1Id, ctv1Id },
+                            OutputStructure = ptv1Id + "-" + ctv1Id + "_Ph"
+                        });
+
                         break;
                     }
 
@@ -1777,6 +1785,14 @@ namespace USZ_ARTEMIS.Actions
                             Type = RuleType.Subtraction,
                             InputStructures = new List<string> { ptv1Id, "Bowel+Sigma+3mm_Ph" },
                             OutputStructure = ptv1Id + "_crop_Ph"
+                        });
+
+                        // PTV1-CTV1 generation
+                        ruleSet.Rules.Add(new StructureRule
+                        {
+                            Type = RuleType.Subtraction,
+                            InputStructures = new List<string> { ptv1Id, ctv1Id },
+                            OutputStructure = ptv1Id + "-" + ctv1Id + "_Ph"
                         });
 
                         // PTV2 crop
