@@ -57,3 +57,4 @@ USZ_ARTEMIS_Preprocessing.local.config
 *.local.json
 *.local.config
 .env
+/reference
