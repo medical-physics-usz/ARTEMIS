@@ -48,6 +48,28 @@ import queue
 import gc
 
 
+def _crop_coverage_warning_message(crop_result: dict) -> str | None:
+    """Build the user warning for an ROI outside longitudinal image coverage."""
+
+    if crop_result.get("warning_code") != "insufficient_longitudinal_coverage":
+        return None
+
+    roi_name = crop_result.get("roi_name") or "the +2cm_Ph structure"
+    caudal = float(crop_result.get("caudal_missing_mm") or 0.0)
+    cranial = float(crop_result.get("cranial_missing_mm") or 0.0)
+    return (
+        f"The structure '{roi_name}' does not fully fit within the acquired "
+        "image series.\n\n"
+        "Additional longitudinal coverage required:\n"
+        f"- Caudally: {caudal:.1f} mm\n"
+        f"- Cranially: {cranial:.1f} mm\n\n"
+        "Acquiring a new image with a larger longitudinal field of view is "
+        "recommended.\n\n"
+        "The structures were copied successfully. The image series was not "
+        "cropped, and processing will continue."
+    )
+
+
 class ConsoleRedirector:
     """Redirect writes to a Tkinter text widget from any thread."""
 
@@ -1201,6 +1223,14 @@ def main():
                         last_fixed_uid = derived_series_uid
                         aria_blocked_series_uids.discard(derived_series_uid)
                     copy_status.config(text="\u2705", fg="green")
+                    coverage_warning = _crop_coverage_warning_message(crop_result)
+                    if coverage_warning:
+                        if automation_triggered:
+                            automation_log(coverage_warning.replace("\n", " "))
+                        messagebox.showwarning(
+                            "Insufficient image coverage",
+                            coverage_warning,
+                        )
                 else:
                     if used_fixed_uid:
                         aria_blocked_series_uids.add(used_fixed_uid)
