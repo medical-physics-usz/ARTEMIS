@@ -20,6 +20,11 @@ dependencies = [
     "tqdm",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<10",
+]
+
 [project.scripts]
 artemis-preprocessing = "artemis_preprocessing.cli:main"
 

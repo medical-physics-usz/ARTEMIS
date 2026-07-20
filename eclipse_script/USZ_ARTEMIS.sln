@@ -5,6 +5,8 @@ VisualStudioVersion = 17.2.32516.85
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "USZ_ARTEMIS", "USZ_ARTEMIS\USZ_ARTEMIS.csproj", "{3070F2C2-A57E-4966-9477-74716E64057E}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "USZ_ARTEMIS.Core", "USZ_ARTEMIS.Core\USZ_ARTEMIS.Core.csproj", "{42E51A32-12F3-4FBE-A70E-DBD057542AFC}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -15,6 +17,10 @@ Global
 		{3070F2C2-A57E-4966-9477-74716E64057E}.Debug|x64.Build.0 = Debug|x64
 		{3070F2C2-A57E-4966-9477-74716E64057E}.Release|x64.ActiveCfg = Release|x64
 		{3070F2C2-A57E-4966-9477-74716E64057E}.Release|x64.Build.0 = Release|x64
+		{42E51A32-12F3-4FBE-A70E-DBD057542AFC}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{42E51A32-12F3-4FBE-A70E-DBD057542AFC}.Debug|x64.Build.0 = Debug|Any CPU
+		{42E51A32-12F3-4FBE-A70E-DBD057542AFC}.Release|x64.ActiveCfg = Release|Any CPU
+		{42E51A32-12F3-4FBE-A70E-DBD057542AFC}.Release|x64.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

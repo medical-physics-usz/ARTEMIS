@@ -23,3 +23,17 @@ Git.
 ## Build
 
 Use Visual Studio. Build outputs are generated under the project `plugins/` folder and are ignored by Git.
+
+## Offline development on macOS
+
+Pure logic lives in `USZ_ARTEMIS.Core`, which targets .NET Standard 2.0 so the
+existing .NET Framework 4.8 plugin can consume it. Cross-platform tests target
+.NET 10 (the current LTS SDK installed on the Mac) and are kept in a separate
+solution that does not load WPF or ESAPI:
+
+```bash
+dotnet test USZ_ARTEMIS.Offline.sln
+```
+
+Keep Varian and WPF-dependent code in `USZ_ARTEMIS`. Its authoritative build
+and all Eclipse integration testing remain Windows-only.
