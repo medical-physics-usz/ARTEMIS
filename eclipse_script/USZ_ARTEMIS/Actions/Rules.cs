@@ -55,7 +55,7 @@ namespace USZ_ARTEMIS.Actions
             string patientId = selectedPlan.Course.Patient.Id;
             string courseId = selectedPlan.Course.Id;
             string planId = selectedPlan.Id;
-            return Path.Combine(AppPaths.RulesFolder, RulesFilePathUtilities.CreateFileName(patientId, courseId, planId));
+            return Path.Combine(AppPaths.RulesFolder, $"{patientId}_{courseId}_{planId}.json");
         }
 
         public static string RetrieveRulesFile(PlanSetup selectedPlan)
