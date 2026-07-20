@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <ProjectGuid>{42E51A32-12F3-4FBE-A70E-DBD057542AFC}</ProjectGuid>
+    <RootNamespace>USZ_ARTEMIS.Core</RootNamespace>
+    <AssemblyName>USZ_ARTEMIS.Core</AssemblyName>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+</Project>
