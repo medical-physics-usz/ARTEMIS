@@ -219,13 +219,15 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
                 print(f"Skipping ROI {number} ({name}) because it does not match the plan suffix")
                 return True
 
-        # Special handling for PTV ROIs ending with "+2cm_ph" (should not be skipped due to "_ph")
+        # Keep only the +2cm_ph helper among PTV structures.
         if name_lower.startswith("ptv") and name_lower.endswith("+2cm_ph"):
             pass  # allowed
-        # elif name_lower in {"or_hip_water_ph", "highdensity_ph", "highdensity_ph_inptv", "or_markers_water_ph"}:
-        #     pass
         else:
-            if name_lower.startswith("zzz") or name_lower.endswith("_ph"):
+            if (
+                name_lower.startswith("ptv")
+                or name_lower.startswith("zzz")
+                or name_lower.endswith("_ph")
+            ):
                 print(f"Skipping ROI {number} ({name})")
                 return True
 
@@ -236,14 +238,6 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
             print(f"Skipping ROI {number} ({name})")
             return True
 
-        return False
-
-    # Helper function: determine if an ROI's Contour Sequence should be removed.
-    def skip_contour(name):
-        name_lower = name.lower()
-        # Keep contours only for PTVs ending with "+2cm_ph"
-        if name_lower.startswith("ptv") and not name_lower.endswith("+2cm_ph"):
-            return True
         return False
 
     def _collect_roi_numbers_by_name(rtstruct):
@@ -440,19 +434,14 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
         # Look up the ROI name that corresponds to this contour using the ROI number.
         roi_name = roi_lookup.get(ref_roi_num, "")
         _apply_roi_display_color(new_roi_contour, roi_name)
-        if skip_contour(roi_name):
-            # For ROIs starting with "PTV", remove the Contour Sequence.
-            print(f"Copying ROI {ref_roi_num} ({roi_name}) without contour sequence")
-            new_roi_contour.ContourSequence = pydicom.sequence.Sequence()
-        else:
-            # Transform the coordinates for each contour within this ROI contour item.
-            print(f"Copying ROI {ref_roi_num} ({roi_name})")
-            if hasattr(new_roi_contour, "ContourSequence"):
-                for contour in new_roi_contour.ContourSequence:
-                    current_data = contour.ContourData
-                    new_data = transform_contour_points(rigid_transform, current_data)
-                    # Convert the transformed coordinates to strings as required by DICOM.
-                    contour.ContourData = [str(v) for v in new_data]
+        # Transform the coordinates for each contour within this ROI contour item.
+        print(f"Copying ROI {ref_roi_num} ({roi_name})")
+        if hasattr(new_roi_contour, "ContourSequence"):
+            for contour in new_roi_contour.ContourSequence:
+                current_data = contour.ContourData
+                new_data = transform_contour_points(rigid_transform, current_data)
+                # Convert the transformed coordinates to strings as required by DICOM.
+                contour.ContourData = [str(v) for v in new_data]
 
         rtstruct_new.ROIContourSequence.append(new_roi_contour)
         if progress_callback:
@@ -476,3 +465,4 @@ def copy_structures(current_directory, patient_id, rtplan_label, rigid_transform
     output_filename = os.path.join(current_directory, rtstruct_new_filename)
     pydicom.dcmwrite(output_filename, rtstruct_new, write_like_original=False)
     # print(f"Updated RTSTRUCT saved to {output_filename}")
+    return output_filename
