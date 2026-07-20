@@ -238,7 +238,7 @@ def resample_ct(current_folder):
 def resample_mr_series_by_description(
     current_folder,
     series_description="sCT_sp_Pel_T2",
-    target_slice_thickness=3.0,
+    target_slice_thickness=2.5,
 ):
     """
     Resample MR series matching *series_description* to target slice thickness,
