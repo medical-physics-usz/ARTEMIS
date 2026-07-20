@@ -8,6 +8,7 @@ using System.Drawing;
 using Microsoft.VisualBasic;
 using Newtonsoft.Json;
 using USZ_ARTEMIS.Configuration;
+using USZ_ARTEMIS.Core.Rules;
 using USZ_ARTEMIS.StructureCreation;
 using VMS.TPS.Common.Model.API;
 using VMS.TPS.Common.Model.Types;
@@ -46,30 +47,6 @@ namespace USZ_ARTEMIS.Actions
         }
 
         // ----------------- PATH / LOAD / SAVE (JSON) -----------------
-
-        private static string GuessBasePlanId(string planId)
-        {
-            if (string.IsNullOrEmpty(planId))
-            {
-                return planId;
-            }
-
-            // Heuristic for copied plans, e.g. "...aA" -> "...a"
-            if (planId.Length >= 2 &&
-                planId[planId.Length - 2] == 'a' &&
-                char.IsUpper(planId[planId.Length - 1]))
-            {
-                return planId.Substring(0, planId.Length - 1);
-            }
-
-            // Fallback heuristic for trailing fraction letters.
-            if (planId.Length >= 2 && char.IsUpper(planId[planId.Length - 1]))
-            {
-                return planId.Substring(0, planId.Length - 1);
-            }
-
-            return planId;
-        }
 
         private static string GetPreferredRulesFilePath(PlanSetup selectedPlan)
         {
@@ -184,7 +161,7 @@ namespace USZ_ARTEMIS.Actions
             }
 
             PlanSetup chosenPlan = null;
-            string guessedBasePlanId = GuessBasePlanId(selectedPlan.Id);
+            string guessedBasePlanId = PlanIdUtilities.GuessBasePlanId(selectedPlan.Id);
 
             using (var popupForm = new Form())
             {

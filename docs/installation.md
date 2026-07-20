@@ -2,13 +2,14 @@
 
 ## ARTEMIS Preprocessing
 
-Install Python 3.12 or newer.
+Install Python 3.12.
 
 ```bash
 cd preprocessing
-python -m venv .venv
+python3.12 -m venv .venv
 . .venv/bin/activate
-python -m pip install -e .
+python -m pip install -c constraints-dev.txt -e '.[dev]'
+python -m pytest
 ```
 
 Create a local `.env` file from `configs/env.example`. Do not commit `.env`.

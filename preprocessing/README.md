@@ -16,10 +16,16 @@ Python GUI and preprocessing pipeline for the ARTEMIS workflow.
 
 ```bash
 cd preprocessing
-python -m venv .venv
+python3.12 -m venv .venv
 . .venv/bin/activate
-python -m pip install -e .
+python -m pip install -c constraints-dev.txt -e '.[dev]'
+python -m pytest
 ```
+
+Python 3.12 is the shared development baseline. The Windows executable should
+be built with the same Python minor version on the work PC.
+`constraints-dev.txt` keeps the resolved development packages consistent across
+the Mac and Windows environments.
 
 Runtime configuration is still loaded from `.env`. Start from `configs/env.example` and keep real clinical paths, registration log locations, and credentials out of Git.
 

@@ -14,6 +14,7 @@ The Python pipeline also contains an Eclipse launcher script in `preprocessing/e
 - Python development: see `preprocessing/README.md`.
 - Python executable deployment: see `docs/deployment.md`.
 - ESAPI development: see `eclipse_script/README.md`.
+- macOS C# tests: run `dotnet test USZ_ARTEMIS.Offline.sln` from `eclipse_script/`.
 - Data handling rules: see `docs/data_protection.md`.
 
 ## Repository Structure
