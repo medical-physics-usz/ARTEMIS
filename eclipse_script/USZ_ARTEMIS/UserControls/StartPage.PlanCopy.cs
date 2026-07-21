@@ -254,16 +254,15 @@ namespace USZ_ARTEMIS
             var copiedPlan = originalPlan.Course.CopyPlanSetup(originalPlan, newStructureSet, null);
 
             string fractionSuffix = cb_FractionLetter.Text;
-            string newPlanId = originalPlan.Id + fractionSuffix;
+            PlanCopyNames copyNames = PlanCopyNames.Create(originalPlan.Id, originalPlan.Name, fractionSuffix);
 
-            if (newPlanId.Length > 13)
+            if (copyNames.WasShortened)
             {
-                newPlanId = originalPlan.Id.Remove(2, 3) + fractionSuffix;
-                MessageBox.Show("Copied plan ID was shortend because a full plan ID would exceed the character limit.", "Plan Copy Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show("Copied plan ID and name were shortened because a full plan ID would exceed the character limit.", "Plan Copy Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
 
-            copiedPlan.Id = newPlanId;
-            copiedPlan.Name = originalPlan.Name + fractionSuffix;
+            copiedPlan.Id = copyNames.Id;
+            copiedPlan.Name = copyNames.Name;
 
             var targetMachineId = GetSelectedMachineId();
             if (!string.IsNullOrWhiteSpace(targetMachineId))
