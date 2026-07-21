@@ -142,11 +142,50 @@ namespace USZ_ARTEMIS.Actions
             catch (System.Exception ex)
             {
                 MessageBox.Show(
-                    "Could not open the Rules folder.\n\n" + ex.Message,
+                    "Could not open the Rules folder.\n\n" +
+                    GetRulesPathDiagnostics(null) + "\n\n" + ex.Message,
                     "Open folder failed",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Error);
             }
+        }
+
+        private static string GetRulesPathDiagnostics(string expectedPath)
+        {
+            string configurationPath = string.IsNullOrWhiteSpace(AppPaths.ConfigurationSourcePath)
+                ? "(none found)"
+                : AppPaths.ConfigurationSourcePath;
+            string configurationError = string.IsNullOrWhiteSpace(AppPaths.ConfigurationLoadError)
+                ? "(none)"
+                : AppPaths.ConfigurationLoadError;
+
+            string folderStatus;
+            try
+            {
+                FileAttributes attributes = File.GetAttributes(AppPaths.RulesFolder);
+                folderStatus = (attributes & FileAttributes.Directory) == FileAttributes.Directory
+                    ? "Accessible directory"
+                    : "Path exists but is not a directory";
+            }
+            catch (Exception ex)
+            {
+                folderStatus = $"Not accessible: {ex.GetType().Name}: {ex.Message}";
+            }
+
+            var lines = new List<string>
+            {
+                $"Configuration file: {configurationPath}",
+                $"Configuration error: {configurationError}",
+                $"Resolved rules folder: {AppPaths.RulesFolder}",
+                $"Rules folder status: {folderStatus}"
+            };
+
+            if (!string.IsNullOrWhiteSpace(expectedPath))
+            {
+                lines.Add($"Expected full path: {expectedPath}");
+            }
+
+            return string.Join("\n", lines);
         }
 
         private static PlanSetup PromptForRulesSourcePlan(PlanSetup selectedPlan, string missingPath, string actionLabel)
@@ -166,31 +205,35 @@ namespace USZ_ARTEMIS.Actions
             using (var popupForm = new Form())
             {
                 popupForm.Text = "Rules file not found";
-                popupForm.Width = 620;
-                popupForm.Height = 220;
+                popupForm.Width = 900;
+                popupForm.Height = 390;
                 popupForm.StartPosition = FormStartPosition.CenterScreen;
                 popupForm.FormBorderStyle = FormBorderStyle.FixedDialog;
                 popupForm.MaximizeBox = false;
                 popupForm.MinimizeBox = false;
 
-                var label = new Label
+                var diagnosticsText = new TextBox
                 {
                     Left = 20,
                     Top = 20,
-                    Width = 560,
-                    Height = 70,
-                    AutoSize = false,
+                    Width = 840,
+                    Height = 225,
+                    Multiline = true,
+                    ReadOnly = true,
+                    ScrollBars = ScrollBars.Both,
+                    WordWrap = false,
+                    TabStop = false,
                     Text =
                         $"No rules file was found for plan '{selectedPlan.Id}'.\n" +
-                        $"Expected file: {Path.GetFileName(missingPath)}\n\n" +
+                        GetRulesPathDiagnostics(missingPath) + "\n\n" +
                         $"Select the base plan in course '{selectedPlan.Course.Id}' to {actionLabel} its rules."
                 };
 
                 var comboBox = new ComboBox
                 {
                     Left = 20,
-                    Top = 95,
-                    Width = 560,
+                    Top = 255,
+                    Width = 840,
                     DropDownStyle = ComboBoxStyle.DropDownList
                 };
 
@@ -223,8 +266,8 @@ namespace USZ_ARTEMIS.Actions
                 {
                     Text = "Use selected plan",
                     Width = 140,
-                    Left = 120,
-                    Top = 135
+                    Left = 230,
+                    Top = 295
                 };
 
                 usePlanButton.Click += (sender, e) =>
@@ -244,8 +287,8 @@ namespace USZ_ARTEMIS.Actions
                 {
                     Text = "Open rules folder",
                     Width = 140,
-                    Left = 270,
-                    Top = 135
+                    Left = 380,
+                    Top = 295
                 };
 
                 openFolderButton.Click += (sender, e) => OpenRulesFolder();
@@ -254,8 +297,8 @@ namespace USZ_ARTEMIS.Actions
                 {
                     Text = "Cancel",
                     Width = 100,
-                    Left = 420,
-                    Top = 135
+                    Left = 530,
+                    Top = 295
                 };
 
                 cancelButton.Click += (sender, e) =>
@@ -264,7 +307,7 @@ namespace USZ_ARTEMIS.Actions
                     popupForm.Close();
                 };
 
-                popupForm.Controls.Add(label);
+                popupForm.Controls.Add(diagnosticsText);
                 popupForm.Controls.Add(comboBox);
                 popupForm.Controls.Add(usePlanButton);
                 popupForm.Controls.Add(openFolderButton);

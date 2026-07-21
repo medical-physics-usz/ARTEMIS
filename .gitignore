@@ -51,10 +51,10 @@ temp/
 # Local configs / secrets
 config.yaml
 config.json
-AppPaths.local.json
 USZ_ARTEMIS_Preprocessing.local.config
 *.local.yaml
 *.local.json
+eclipse_script/USZ_ARTEMIS/Configuration/*.esapi.json
 *.local.config
 .env
 /reference

@@ -196,7 +196,11 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="app.config" />
-    <None Include="Configuration\AppPaths.example.json" />
+    <None Include="Configuration\USZ_ARTEMIS.AppPaths.example.json" />
+    <None Include="Configuration\$(AssemblyName).json" Condition="Exists('Configuration\$(AssemblyName).json')">
+      <TargetPath>$(AssemblyName).json</TargetPath>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
