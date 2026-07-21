@@ -49,25 +49,40 @@ import gc
 
 
 def _crop_coverage_warning_message(crop_result: dict) -> str | None:
-    """Build the user warning for an ROI outside longitudinal image coverage."""
+    """Build the user warning when an ROI prevents safe image cropping."""
 
-    if crop_result.get("warning_code") != "insufficient_longitudinal_coverage":
-        return None
-
+    warning_code = crop_result.get("warning_code")
     roi_name = crop_result.get("roi_name") or "the +2cm_Ph structure"
-    caudal = float(crop_result.get("caudal_missing_mm") or 0.0)
-    cranial = float(crop_result.get("cranial_missing_mm") or 0.0)
-    return (
-        f"The structure '{roi_name}' does not fully fit within the acquired "
-        "image series.\n\n"
-        "Additional longitudinal coverage required:\n"
-        f"- Caudally: {caudal:.1f} mm\n"
-        f"- Cranially: {cranial:.1f} mm\n\n"
-        "Acquiring a new image with a larger longitudinal field of view is "
-        "recommended.\n\n"
-        "The structures were copied successfully. The image series was not "
-        "cropped, and processing will continue."
-    )
+    if warning_code == "insufficient_longitudinal_coverage":
+        caudal = float(crop_result.get("caudal_missing_mm") or 0.0)
+        cranial = float(crop_result.get("cranial_missing_mm") or 0.0)
+        return (
+            f"The structure '{roi_name}' does not fully fit within the acquired "
+            "image series.\n\n"
+            "Additional longitudinal coverage required:\n"
+            f"- Caudally: {caudal:.1f} mm\n"
+            f"- Cranially: {cranial:.1f} mm\n\n"
+            "Acquiring a new image with a larger longitudinal field of view is "
+            "recommended.\n\n"
+            "The structures were copied successfully. The image series was not "
+            "cropped, and processing will continue."
+        )
+    if warning_code == "insufficient_in_plane_crop_margin":
+        return (
+            f"The structure '{roi_name}' does not fit within the proposed "
+            "reduced in-plane field of view.\n\n"
+            "The structures were copied successfully. The full image field of "
+            "view was retained, and processing will continue."
+        )
+    if warning_code == "insufficient_in_plane_coverage":
+        return (
+            f"The structure '{roi_name}' does not fully fit within the acquired "
+            "in-plane field of view. Acquiring a new image with a larger "
+            "in-plane field of view is recommended.\n\n"
+            "The structures were copied successfully. The image series was not "
+            "cropped, and processing will continue."
+        )
+    return None
 
 
 class ConsoleRedirector:
@@ -1228,7 +1243,7 @@ def main():
                         if automation_triggered:
                             automation_log(coverage_warning.replace("\n", " "))
                         messagebox.showwarning(
-                            "Insufficient image coverage",
+                            "Image crop skipped",
                             coverage_warning,
                         )
                 else:

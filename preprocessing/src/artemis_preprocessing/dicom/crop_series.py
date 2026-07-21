@@ -279,13 +279,15 @@ def _series_coverage(positions: np.ndarray) -> tuple[float, float]:
     return float(lower), float(upper)
 
 
-def _validate_target_in_plane(
+def _target_in_plane_status(
     roi_contour: Dataset,
     *,
     slices: list[_Slice],
     normal: np.ndarray,
     crop_pixels: int,
-) -> None:
+) -> str | None:
+    """Classify whether the target fits the original and proposed crop FOVs."""
+
     positions = np.asarray([item.position for item in slices], dtype=float)
     rows = slices[0].rows
     columns = slices[0].columns
@@ -293,6 +295,7 @@ def _validate_target_in_plane(
     maximum_column = columns - crop_pixels - 0.5
     maximum_row = rows - crop_pixels - 0.5
     tolerance = 1e-3
+    outside_reduced_fov = False
 
     for contour in roi_contour.ContourSequence:
         points = _contour_points(contour)
@@ -306,15 +309,23 @@ def _validate_target_in_plane(
             offsets @ slice_info.column_direction
         ) / slice_info.pixel_spacing[0]
         if (
+            np.min(column_indices) < -0.5 - tolerance
+            or np.max(column_indices) > columns - 0.5 + tolerance
+            or np.min(row_indices) < -0.5 - tolerance
+            or np.max(row_indices) > rows - 0.5 + tolerance
+        ):
+            return "outside_original_fov"
+        if (
             np.min(column_indices) < minimum_index - tolerance
             or np.max(column_indices) > maximum_column + tolerance
             or np.min(row_indices) < minimum_index - tolerance
             or np.max(row_indices) > maximum_row + tolerance
         ):
-            raise CropSeriesError(
-                "The crop-limiting ROI extends outside the reduced in-plane "
-                "field of view"
-            )
+            outside_reduced_fov = True
+
+    if outside_reduced_fov:
+        return "outside_reduced_fov"
+    return None
 
 
 def _image_reference(
@@ -668,12 +679,34 @@ def crop_registered_series(
                 caudal_missing_mm=caudal_missing,
                 cranial_missing_mm=cranial_missing,
             )
-        _validate_target_in_plane(
+        in_plane_status = _target_in_plane_status(
             roi_contour,
             slices=slices,
             normal=normal,
             crop_pixels=in_plane_crop_pixels,
         )
+        if in_plane_status is not None:
+            if in_plane_status == "outside_original_fov":
+                warning_code = "insufficient_in_plane_coverage"
+                warning = (
+                    f"ROI '{roi_name}' extends outside the acquired in-plane "
+                    "field of view; leaving the image series unchanged"
+                )
+            else:
+                warning_code = "insufficient_in_plane_crop_margin"
+                warning = (
+                    f"ROI '{roi_name}' extends outside the proposed reduced "
+                    "in-plane field of view; leaving the image series unchanged"
+                )
+            return CropResult(
+                status="skipped",
+                roi_name=roi_name,
+                original_rows=original_rows,
+                original_columns=original_columns,
+                source_series_uid=str(series_uid),
+                warning=warning,
+                warning_code=warning_code,
+            )
 
         first_contour = _nearest_slice_index(positions, min(projected_points))
         last_contour = _nearest_slice_index(positions, max(projected_points))
