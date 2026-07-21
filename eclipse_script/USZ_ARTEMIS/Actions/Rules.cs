@@ -8,6 +8,7 @@ using System.Drawing;
 using Microsoft.VisualBasic;
 using Newtonsoft.Json;
 using USZ_ARTEMIS.Configuration;
+using USZ_ARTEMIS.Core.Rules;
 using USZ_ARTEMIS.StructureCreation;
 using VMS.TPS.Common.Model.API;
 using VMS.TPS.Common.Model.Types;
