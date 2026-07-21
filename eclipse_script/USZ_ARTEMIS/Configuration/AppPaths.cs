@@ -9,7 +9,18 @@ namespace USZ_ARTEMIS.Configuration
     {
         private const string ConfigFileName = "AppPaths.local.json";
 
-        private static readonly Dictionary<string, string> Values = LoadValues();
+        private static readonly ConfigurationLoadResult Configuration = LoadValues();
+        private static readonly Dictionary<string, string> Values = Configuration.Values;
+
+        public static string ConfigurationSourcePath
+        {
+            get { return Configuration.SourcePath; }
+        }
+
+        public static string ConfigurationLoadError
+        {
+            get { return Configuration.ErrorMessage; }
+        }
 
         public static string PublishedScriptIconPath
         {
@@ -61,9 +72,10 @@ namespace USZ_ARTEMIS.Configuration
             return defaultValue;
         }
 
-        private static Dictionary<string, string> LoadValues()
+        private static ConfigurationLoadResult LoadValues()
         {
-            foreach (string candidate in GetConfigCandidates())
+            var candidates = new List<string>(GetConfigCandidates());
+            foreach (string candidate in candidates)
             {
                 if (!File.Exists(candidate))
                 {
@@ -79,15 +91,38 @@ namespace USZ_ARTEMIS.Configuration
                         values[property.Name] = property.Value.ToString();
                     }
 
-                    return values;
+                    return new ConfigurationLoadResult(values, candidate, null);
                 }
-                catch
+                catch (Exception ex)
                 {
-                    return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    return new ConfigurationLoadResult(
+                        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                        candidate,
+                        $"{ex.GetType().Name}: {ex.Message}");
                 }
             }
 
-            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            return new ConfigurationLoadResult(
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                null,
+                "No AppPaths.local.json was found. Checked: " + string.Join("; ", candidates));
+        }
+
+        private sealed class ConfigurationLoadResult
+        {
+            public ConfigurationLoadResult(
+                Dictionary<string, string> values,
+                string sourcePath,
+                string errorMessage)
+            {
+                Values = values;
+                SourcePath = sourcePath;
+                ErrorMessage = errorMessage;
+            }
+
+            public Dictionary<string, string> Values { get; }
+            public string SourcePath { get; }
+            public string ErrorMessage { get; }
         }
 
         private static IEnumerable<string> GetConfigCandidates()
