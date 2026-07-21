@@ -8,7 +8,6 @@ using System.Drawing;
 using Microsoft.VisualBasic;
 using Newtonsoft.Json;
 using USZ_ARTEMIS.Configuration;
-using USZ_ARTEMIS.Core.Rules;
 using USZ_ARTEMIS.StructureCreation;
 using VMS.TPS.Common.Model.API;
 using VMS.TPS.Common.Model.Types;
@@ -55,7 +54,7 @@ namespace USZ_ARTEMIS.Actions
             string patientId = selectedPlan.Course.Patient.Id;
             string courseId = selectedPlan.Course.Id;
             string planId = selectedPlan.Id;
-            return Path.Combine(AppPaths.RulesFolder, RulesFilePathUtilities.CreateFileName(patientId, courseId, planId));
+            return Path.Combine(AppPaths.RulesFolder, $"{patientId}_{courseId}_{planId}.json");
         }
 
         public static string RetrieveRulesFile(PlanSetup selectedPlan)
