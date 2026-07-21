@@ -11,6 +11,9 @@ The Eclipse launcher in `preprocessing/eclipse_launcher/USZ_ARTEMIS_Preprocessin
 ## Full ESAPI Workflow
 
 The full Eclipse Scripting API project lives in `eclipse_script/`. It is a normal Visual Studio solution and is built separately from the Python executable.
-Deployment-specific ESAPI paths are read from `AppPaths.local.json`, which is not committed.
+Deployment-specific ESAPI paths are read from a JSON file beside the DLL with
+the same filename stem and are not committed. For example,
+`USZ_ARTEMIS_v26.7.20.2.esapi.dll` uses
+`USZ_ARTEMIS_v26.7.20.2.esapi.json`.
 
 The Eclipse launcher is not part of the ESAPI solution. It belongs to the Python executable deployment workflow.

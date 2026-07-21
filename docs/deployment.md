@@ -21,4 +21,9 @@ beside the deployed launcher script and set the executable path and working dire
 ## Full ESAPI Project
 
 Build `eclipse_script/USZ_ARTEMIS.sln` in Visual Studio. Deploy the generated ESAPI plugin to the Varian Published Scripts folder.
-Copy `AppPaths.example.json` to `AppPaths.local.json` beside the deployed ESAPI assembly, or set `USZ_ARTEMIS_APP_PATHS` to the local config file path.
+Copy `USZ_ARTEMIS.AppPaths.example.json` beside the deployed ESAPI assembly and
+rename it by replacing the DLL's final `.dll` extension with `.json`. For
+example, deploy `USZ_ARTEMIS_v26.7.20.2.esapi.json` beside
+`USZ_ARTEMIS_v26.7.20.2.esapi.dll`. Alternatively, set
+`USZ_ARTEMIS_APP_PATHS` to an explicit configuration path. The build copies a
+source-local `$(AssemblyName).json` beside the output DLL when it is present.

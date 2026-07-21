@@ -16,9 +16,12 @@ eclipse_script/ESAPI 18.1/
 
 NuGet packages are restored into `eclipse_script/packages/`.
 
-Deployment-specific paths are loaded from `AppPaths.local.json`. Start from
-`USZ_ARTEMIS/Configuration/AppPaths.example.json` and keep the local file out of
-Git.
+Deployment-specific paths are loaded from a JSON file beside the DLL with the
+same filename stem, for example `USZ_ARTEMIS_v26.7.20.2.esapi.json` for
+`USZ_ARTEMIS_v26.7.20.2.esapi.dll`. Start from
+`USZ_ARTEMIS/Configuration/USZ_ARTEMIS.AppPaths.example.json` and keep the local
+file out of Git. When a version-matched JSON file is present under
+`Configuration/`, the Visual Studio build copies it beside the output DLL.
 
 ## Build
 

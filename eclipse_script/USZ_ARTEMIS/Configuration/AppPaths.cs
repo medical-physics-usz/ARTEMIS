@@ -7,8 +7,6 @@ namespace USZ_ARTEMIS.Configuration
 {
     internal static class AppPaths
     {
-        private const string ConfigFileName = "AppPaths.local.json";
-
         private static readonly ConfigurationLoadResult Configuration = LoadValues();
         private static readonly Dictionary<string, string> Values = Configuration.Values;
 
@@ -105,7 +103,8 @@ namespace USZ_ARTEMIS.Configuration
             return new ConfigurationLoadResult(
                 new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
                 null,
-                "No AppPaths.local.json was found. Checked: " + string.Join("; ", candidates));
+
+                "No ARTEMIS path configuration was found. Checked: " + string.Join("; ", candidates));
         }
 
         private sealed class ConfigurationLoadResult
@@ -134,22 +133,37 @@ namespace USZ_ARTEMIS.Configuration
             }
 
             string assemblyLocation = typeof(AppPaths).Assembly.Location;
+            string configFileName = GetAssemblyConfigFileName(assemblyLocation);
             if (!string.IsNullOrWhiteSpace(assemblyLocation))
             {
                 string assemblyFolder = Path.GetDirectoryName(assemblyLocation);
                 if (!string.IsNullOrWhiteSpace(assemblyFolder))
                 {
-                    yield return Path.Combine(assemblyFolder, ConfigFileName);
+                    yield return Path.Combine(assemblyFolder, configFileName);
                 }
             }
 
             string baseDirectory = AppDomain.CurrentDomain.BaseDirectory;
             if (!string.IsNullOrWhiteSpace(baseDirectory))
             {
-                yield return Path.Combine(baseDirectory, ConfigFileName);
+                yield return Path.Combine(baseDirectory, configFileName);
             }
 
-            yield return Path.Combine(Directory.GetCurrentDirectory(), "Configuration", ConfigFileName);
+            yield return Path.Combine(Directory.GetCurrentDirectory(), "Configuration", configFileName);
+        }
+
+        private static string GetAssemblyConfigFileName(string assemblyLocation)
+        {
+            string assemblyFileName = string.IsNullOrWhiteSpace(assemblyLocation)
+                ? null
+                : Path.GetFileNameWithoutExtension(assemblyLocation);
+
+            if (string.IsNullOrWhiteSpace(assemblyFileName))
+            {
+                assemblyFileName = typeof(AppPaths).Assembly.GetName().Name;
+            }
+
+            return assemblyFileName + ".json";
         }
     }
 }
