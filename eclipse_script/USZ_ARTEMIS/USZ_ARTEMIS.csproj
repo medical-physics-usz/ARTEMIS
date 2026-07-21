@@ -168,6 +168,7 @@
     <Compile Include="Actions\RuleModels.cs" />
     <Compile Include="Actions\Rules.cs" />
     <Compile Include="Actions\Rules.Execution.cs" />
+    <Compile Include="Actions\Rules.HighResolution.cs" />
     <Compile Include="Configuration\AppPaths.cs" />
     <Compile Include="Tools\EvaluateClinicalGoals.cs" />
     <Compile Include="QA\MetricsCalc.cs" />

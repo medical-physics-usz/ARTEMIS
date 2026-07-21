@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Windows.Forms;
+using USZ_ARTEMIS.Core.Rules;
 using VMS.TPS.Common.Model.API;
 using VMS.TPS.Common.Model.Types;
 
@@ -32,6 +33,11 @@ namespace USZ_ARTEMIS.Actions
                         || s.Id.Equals("highdensity_ph_inptv", StringComparison.OrdinalIgnoreCase)
                     ))
                 .ToList();
+
+            if (!PrepareRuleStructuresForHighResolution(targetPlan, toDelete))
+            {
+                return;
+            }
 
             foreach (var structure in toDelete)
             {
@@ -151,6 +157,11 @@ namespace USZ_ARTEMIS.Actions
             }
 
             if (s.IsHighResolution)
+            {
+                return s;
+            }
+
+            if (s.IsApproved && RuleStructureResolutionPolicy.RequiresHighResolution(s.Id))
             {
                 return s;
             }
