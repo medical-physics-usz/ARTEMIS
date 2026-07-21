@@ -603,7 +603,7 @@ def test_in_plane_crop_preserves_pixel_representation(
     )
 
 
-def test_target_roi_outside_reduced_fov_fails_without_mutation(tmp_path: Path):
+def test_target_roi_outside_reduced_fov_skips_crop_without_mutation(tmp_path: Path):
     series_uid, images = _write_image_series(tmp_path)
     rtstruct_path = _write_rtstruct(
         tmp_path / "RS_outside.dcm",
@@ -620,8 +620,37 @@ def test_target_roi_outside_reduced_fov_fails_without_mutation(tmp_path: Path):
 
     result = crop_registered_series(str(tmp_path), series_uid, str(rtstruct_path))
 
-    assert result.status == "failed"
-    assert "reduced in-plane field of view" in result.error
+    assert result.status == "skipped"
+    assert result.warning_code == "insufficient_in_plane_crop_margin"
+    assert "reduced in-plane field of view" in result.warning
+    assert result.source_series_uid == series_uid
+    assert (result.original_rows, result.original_columns) == (256, 256)
+    assert (result.cropped_rows, result.cropped_columns) == (None, None)
+    assert _snapshot(tmp_path) == before
+
+
+def test_target_roi_outside_original_in_plane_fov_skips_with_coverage_warning(
+    tmp_path: Path,
+):
+    series_uid, images = _write_image_series(tmp_path)
+    rtstruct_path = _write_rtstruct(
+        tmp_path / "RS_outside_original.dcm",
+        series_uid=series_uid,
+        image_records=images,
+        rois=[
+            (
+                "PTV+2cm_Ph",
+                [_contour(3, offset=(-140, 0, 0)), _contour(5, offset=(-140, 0, 0))],
+            )
+        ],
+    )
+    before = _snapshot(tmp_path)
+
+    result = crop_registered_series(str(tmp_path), series_uid, str(rtstruct_path))
+
+    assert result.status == "skipped"
+    assert result.warning_code == "insufficient_in_plane_coverage"
+    assert "acquired in-plane field of view" in result.warning
     assert _snapshot(tmp_path) == before
 
 
@@ -958,6 +987,46 @@ def test_copy_and_crop_skipped_keeps_copied_rtstruct(tmp_path: Path, monkeypatch
 
     assert result.status == "skipped"
     assert rtstruct_path.read_bytes() == b"copied"
+
+
+def test_copy_and_crop_in_plane_skip_keeps_structures_and_full_image_fov(
+    tmp_path: Path, monkeypatch
+):
+    series_uid, images = _write_image_series(tmp_path)
+    rtstruct_path = _write_rtstruct(
+        tmp_path / f"RS_{series_uid}.dcm",
+        series_uid=series_uid,
+        image_records=images,
+        rois=[
+            (
+                "PTV+2cm_Ph",
+                [_contour(3, offset=(-100, 0, 0)), _contour(5, offset=(-100, 0, 0))],
+            )
+        ],
+    )
+    image_hashes = {path: _sha256(path) for path, _, _ in images}
+
+    def fake_copy(*args, **kwargs):
+        dataset = pydicom.dcmread(rtstruct_path)
+        dataset.StructureSetLabel = "COPIED"
+        pydicom.dcmwrite(rtstruct_path, dataset, write_like_original=False)
+        return str(rtstruct_path)
+
+    monkeypatch.setattr(crop_series, "copy_structures", fake_copy)
+
+    result = crop_series.copy_structures_and_crop(
+        str(tmp_path),
+        "patient",
+        "plan",
+        object(),
+        series_uid=series_uid,
+        base_series_uid="4.5.6",
+    )
+
+    assert result.status == "skipped"
+    assert result.warning_code == "insufficient_in_plane_crop_margin"
+    assert pydicom.dcmread(rtstruct_path).StructureSetLabel == "COPIED"
+    assert {path: _sha256(path) for path, _, _ in images} == image_hashes
 
 
 def test_copy_and_crop_success_keeps_cropped_rtstruct(tmp_path: Path, monkeypatch):
