@@ -36,8 +36,7 @@ namespace USZ_ARTEMIS
             if (status == "Unapproved")
             {
                 PlanSetup selectedPlan = GetSelectedPlan();
-                string rulesFilePath = Actions.Rules.RetrieveRulesFile(selectedPlan);
-                Actions.Rules.ApplyRules(selectedPlan, rulesFilePath);
+                Actions.Rules.ApplyRules(selectedPlan, selectedPlan);
             }
             else
             {

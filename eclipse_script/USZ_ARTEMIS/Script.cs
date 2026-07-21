@@ -10,7 +10,7 @@ using USZ_ARTEMIS.UserControls;
 using VMS.TPS.Common.Model.API;
 
 // TODO: Replace the following version attributes by creating AssemblyInfo.cs. You can do this in the properties of the Visual Studio project.
-[assembly: AssemblyVersion("9.12.0.0")]
+[assembly: AssemblyVersion("26.7.21.1")]
 [assembly: AssemblyFileVersion("1.0.0.1")]
 [assembly: AssemblyInformationalVersion("1.0")]
 
@@ -46,7 +46,7 @@ namespace VMS.TPS
             Patient patient = context.Patient;
             patient.BeginModifications();
 
-            window.Title = "ARTEMIS v9.12";
+            window.Title = "ARTEMIS v26.7.21.1";
             window.Width = 1200;
             window.Height = 700;
 

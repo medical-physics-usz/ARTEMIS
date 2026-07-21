@@ -8,7 +8,7 @@
     <OutputType>library</OutputType>
     <AppDesignerFolder>Properties</AppDesignerFolder>
     <RootNamespace>USZ_ARTEMIS</RootNamespace>
-    <AssemblyName>USZ_ARTEMIS_v9.12.esapi</AssemblyName>
+    <AssemblyName>USZ_ARTEMIS_v26.7.21.1.esapi</AssemblyName>
     <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
     <ProjectTypeGuids>{60dc8134-eba5-43b8-bcc9-bb4bc16c2548};{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}</ProjectTypeGuids>
@@ -196,7 +196,11 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="app.config" />
-    <None Include="Configuration\AppPaths.example.json" />
+    <None Include="Configuration\USZ_ARTEMIS.AppPaths.example.json" />
+    <None Include="Configuration\$(AssemblyName).json" Condition="Exists('Configuration\$(AssemblyName).json')">
+      <TargetPath>$(AssemblyName).json</TargetPath>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
