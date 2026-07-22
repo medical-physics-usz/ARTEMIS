@@ -6,7 +6,7 @@
       BouncyCastle.Crypto
 	  BouncyCastle.Cryptography
       System.Runtime.CompilerServices.Unsafe
-      USZ_ARTEMIS.Core
+      USZ_ARTEMIS.Core_v*
     </IncludeAssemblies>
   </Costura>
 </Weavers>

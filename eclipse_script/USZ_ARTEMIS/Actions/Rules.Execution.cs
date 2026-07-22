@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Windows.Forms;
+using USZ_ARTEMIS.Core.Rules;
 using VMS.TPS.Common.Model.API;
 using VMS.TPS.Common.Model.Types;
 
@@ -10,7 +11,11 @@ namespace USZ_ARTEMIS.Actions
 {
     partial class Rules
     {
-        public static void ApplyRules(PlanSetup targetPlan, PlanSetup rulesSourcePlan)
+        public static void ApplyRules(
+            PlanSetup targetPlan,
+            PlanSetup rulesSourcePlan,
+            IDictionary<string, bool> beforePlanCopy = null,
+            IDictionary<string, bool> afterPlanCopy = null)
         {
             string rulesPath = RetrieveRulesFile(rulesSourcePlan);
             string path = ResolveRulesFilePath(rulesSourcePlan, rulesPath, "apply");
@@ -32,6 +37,15 @@ namespace USZ_ARTEMIS.Actions
                         || s.Id.Equals("highdensity_ph_inptv", StringComparison.OrdinalIgnoreCase)
                     ))
                 .ToList();
+
+            if (!PrepareRuleStructuresForHighResolution(
+                    targetPlan,
+                    toDelete,
+                    beforePlanCopy,
+                    afterPlanCopy))
+            {
+                return;
+            }
 
             foreach (var structure in toDelete)
             {
@@ -151,6 +165,11 @@ namespace USZ_ARTEMIS.Actions
             }
 
             if (s.IsHighResolution)
+            {
+                return s;
+            }
+
+            if (s.IsApproved && RuleStructureResolutionPolicy.RequiresHighResolution(s.Id))
             {
                 return s;
             }

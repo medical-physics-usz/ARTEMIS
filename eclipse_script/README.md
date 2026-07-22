@@ -47,6 +47,19 @@ same filename stem, for example `USZ_ARTEMIS_v26.7.20.2.esapi.json` for
 file out of Git. When a version-matched JSON file is present under
 `Configuration/`, the Visual Studio build copies it beside the output DLL.
 
+## Release identity
+
+`ARTEMIS.Version.props` is the single source for the ESAPI release version. It
+gives both the plugin and its embedded `USZ_ARTEMIS.Core` dependency
+release-specific assembly names. This prevents a long-running Eclipse process
+from reusing Core from an older ARTEMIS plugin release.
+
+When preparing a release, update `ArtemisReleaseVersion`, clean the generated
+`bin`, `obj`, and `plugins` directories, rebuild the complete solution, and
+restart Eclipse before testing the new DLL. Costura uses the
+`USZ_ARTEMIS.Core_v*` pattern, so its configuration does not need a matching
+manual version edit.
+
 ## Build
 
 Open `USZ_ARTEMIS.sln` in Visual Studio on Windows. Restore NuGet packages and
