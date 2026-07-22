@@ -251,7 +251,13 @@ namespace USZ_ARTEMIS
                 return;
             }
 
+            IDictionary<string, bool> resolutionBeforePlanCopy =
+                Actions.Rules.CaptureRuleStructureResolutionState(newStructureSet);
+
             var copiedPlan = originalPlan.Course.CopyPlanSetup(originalPlan, newStructureSet, null);
+
+            IDictionary<string, bool> resolutionAfterPlanCopy =
+                Actions.Rules.CaptureRuleStructureResolutionState(copiedPlan.StructureSet);
 
             string fractionSuffix = cb_FractionLetter.Text;
             string newPlanId = originalPlan.Id + fractionSuffix;
@@ -316,7 +322,11 @@ namespace USZ_ARTEMIS
                 }
             }
 
-            Actions.Rules.ApplyRules(copiedPlan, originalPlan);
+            Actions.Rules.ApplyRules(
+                copiedPlan,
+                originalPlan,
+                resolutionBeforePlanCopy,
+                resolutionAfterPlanCopy);
 
             var target = copiedPlan.StructureSet.Structures.FirstOrDefault(s => s.Id == copiedPlan.TargetVolumeID);
             if (target == null)

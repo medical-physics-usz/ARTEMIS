@@ -43,18 +43,58 @@ namespace USZ_ARTEMIS.Actions
             public double HausdorffMm { get; }
         }
 
+        private sealed class StructureResolutionDiagnostic
+        {
+            public StructureResolutionDiagnostic(
+                string structureId,
+                bool? beforePlanCopy,
+                bool? afterPlanCopy,
+                bool atRulePreflight)
+            {
+                StructureId = structureId;
+                BeforePlanCopy = beforePlanCopy;
+                AfterPlanCopy = afterPlanCopy;
+                AtRulePreflight = atRulePreflight;
+            }
+
+            public string StructureId { get; }
+            public bool? BeforePlanCopy { get; }
+            public bool? AfterPlanCopy { get; }
+            public bool AtRulePreflight { get; }
+            public string Action { get; set; }
+        }
+
+        internal static IDictionary<string, bool> CaptureRuleStructureResolutionState(
+            StructureSet structureSet)
+        {
+            return structureSet.Structures
+                .Where(structure => RuleStructureResolutionPolicy.RequiresHighResolution(structure.Id))
+                .ToDictionary(
+                    structure => structure.Id,
+                    structure => structure.IsHighResolution,
+                    StringComparer.OrdinalIgnoreCase);
+        }
+
         private static bool PrepareRuleStructuresForHighResolution(
             PlanSetup targetPlan,
-            ICollection<Structure> structuresScheduledForDeletion)
+            ICollection<Structure> structuresScheduledForDeletion,
+            IDictionary<string, bool> beforePlanCopy,
+            IDictionary<string, bool> afterPlanCopy)
         {
             StructureSet structureSet = targetPlan.StructureSet;
             EsapiImage image = structureSet.Image;
-            var candidates = structureSet.Structures
-                .Where(structure =>
-                    RuleStructureResolutionPolicy.RequiresHighResolution(structure.Id) &&
-                    !structuresScheduledForDeletion.Contains(structure))
+            var matchingStructures = structureSet.Structures
+                .Where(structure => RuleStructureResolutionPolicy.RequiresHighResolution(structure.Id))
                 .OrderBy(structure => structure.Id, StringComparer.OrdinalIgnoreCase)
                 .ToList();
+
+            var diagnostics = matchingStructures.ToDictionary(
+                structure => structure,
+                structure => new StructureResolutionDiagnostic(
+                    structure.Id,
+                    GetCapturedResolution(beforePlanCopy, structure.Id),
+                    GetCapturedResolution(afterPlanCopy, structure.Id),
+                    structure.IsHighResolution));
 
             var alreadyHighResolution = new List<string>();
             var skippedApproved = new List<string>();
@@ -63,23 +103,34 @@ namespace USZ_ARTEMIS.Actions
             var toConvert = new List<Structure>();
             var converted = new List<ConvertedStructureMetrics>();
 
-            foreach (Structure structure in candidates)
+            foreach (Structure structure in matchingStructures)
             {
+                StructureResolutionDiagnostic diagnostic = diagnostics[structure];
+
+                if (structuresScheduledForDeletion.Contains(structure))
+                {
+                    diagnostic.Action = "Scheduled for deletion before rules; no conversion performed.";
+                    continue;
+                }
+
                 if (structure.IsHighResolution)
                 {
                     alreadyHighResolution.Add(structure.Id);
+                    diagnostic.Action = DescribeExistingHighResolution(diagnostic);
                     continue;
                 }
 
                 if (structure.IsApproved)
                 {
                     skippedApproved.Add(structure.Id);
+                    diagnostic.Action = "Low resolution but approved; conversion skipped.";
                     continue;
                 }
 
                 if (!structure.CanConvertToHighResolution())
                 {
                     failures.Add($"{structure.Id}: ESAPI reports that conversion is not possible.");
+                    diagnostic.Action = "Conversion unavailable; rules will not be applied.";
                     continue;
                 }
 
@@ -87,10 +138,12 @@ namespace USZ_ARTEMIS.Actions
                 {
                     snapshots.Add(structure, CaptureContours(structure, image));
                     toConvert.Add(structure);
+                    diagnostic.Action = "Queued for conversion by rule preflight.";
                 }
                 catch (Exception ex)
                 {
                     failures.Add($"{structure.Id}: could not capture contours before conversion ({ex.Message}).");
+                    diagnostic.Action = "Pre-conversion contour capture failed; rules will not be applied.";
                 }
             }
 
@@ -100,7 +153,8 @@ namespace USZ_ARTEMIS.Actions
                     alreadyHighResolution,
                     skippedApproved,
                     converted,
-                    failures);
+                    failures,
+                    matchingStructures.Select(structure => diagnostics[structure]).ToList());
                 return false;
             }
 
@@ -113,6 +167,7 @@ namespace USZ_ARTEMIS.Actions
                 catch (Exception ex)
                 {
                     failures.Add($"{structure.Id}: conversion failed ({ex.Message}).");
+                    diagnostics[structure].Action = "Conversion by rule preflight failed.";
                     break;
                 }
 
@@ -120,6 +175,7 @@ namespace USZ_ARTEMIS.Actions
                 {
                     failures.Add(
                         $"{structure.Id}: conversion returned without error, but the structure is not high resolution.");
+                    diagnostics[structure].Action = "Conversion returned, but the structure remained low resolution.";
                     break;
                 }
 
@@ -127,25 +183,68 @@ namespace USZ_ARTEMIS.Actions
                 {
                     StructureContourSnapshot after = CaptureContours(structure, image);
                     converted.Add(CompareContours(structure.Id, snapshots[structure], after));
+                    diagnostics[structure].Action = "Converted to high resolution by rule preflight.";
                 }
                 catch (Exception ex)
                 {
                     failures.Add(
                         $"{structure.Id}: conversion completed, but contour comparison failed ({ex.Message}).");
+                    diagnostics[structure].Action =
+                        "Converted to high resolution by rule preflight, but contour comparison failed.";
                     break;
                 }
             }
 
-            if (converted.Count > 0 || skippedApproved.Count > 0 || failures.Count > 0)
-            {
-                ShowHighResolutionConversionReport(
-                    alreadyHighResolution,
-                    skippedApproved,
-                    converted,
-                    failures);
-            }
+            ShowHighResolutionConversionReport(
+                alreadyHighResolution,
+                skippedApproved,
+                converted,
+                failures,
+                matchingStructures.Select(structure => diagnostics[structure]).ToList());
 
             return failures.Count == 0;
+        }
+
+        private static bool? GetCapturedResolution(
+            IDictionary<string, bool> capturedState,
+            string structureId)
+        {
+            if (capturedState == null)
+            {
+                return null;
+            }
+
+            bool isHighResolution;
+            return capturedState.TryGetValue(structureId, out isHighResolution)
+                ? (bool?)isHighResolution
+                : null;
+        }
+
+        private static string DescribeExistingHighResolution(StructureResolutionDiagnostic diagnostic)
+        {
+            RuleStructureResolutionTransition transition =
+                RuleStructureResolutionTransitionClassifier.Classify(
+                    diagnostic.BeforePlanCopy,
+                    diagnostic.AfterPlanCopy,
+                    diagnostic.AtRulePreflight);
+
+            switch (transition)
+            {
+                case RuleStructureResolutionTransition.HighBeforePlanCopy:
+                    return "Already high resolution before CopyPlanSetup; no preflight conversion performed.";
+
+                case RuleStructureResolutionTransition.ChangedDuringPlanCopy:
+                    return "Changed from low to high resolution during CopyPlanSetup; no preflight conversion performed.";
+
+                case RuleStructureResolutionTransition.ChangedAfterPlanCopyBeforeRulePreflight:
+                    return "Changed from low to high resolution after CopyPlanSetup and before rule preflight; no preflight conversion performed.";
+
+                case RuleStructureResolutionTransition.HighByAfterPlanCopy:
+                    return "High resolution immediately after CopyPlanSetup; the before-copy state was not captured.";
+
+                default:
+                    return "Already high resolution when rule preflight started; earlier states were not captured.";
+            }
         }
 
         private static StructureContourSnapshot CaptureContours(Structure structure, EsapiImage image)
@@ -294,10 +393,33 @@ namespace USZ_ARTEMIS.Actions
             IReadOnlyCollection<string> alreadyHighResolution,
             IReadOnlyCollection<string> skippedApproved,
             IReadOnlyCollection<ConvertedStructureMetrics> converted,
-            IReadOnlyCollection<string> failures)
+            IReadOnlyCollection<string> failures,
+            IReadOnlyCollection<StructureResolutionDiagnostic> diagnostics)
         {
             var report = new StringBuilder();
             report.AppendLine("High-resolution check before applying rules");
+            report.AppendLine();
+
+            report.AppendLine("Resolution diagnostics:");
+            if (diagnostics.Count == 0)
+            {
+                report.AppendLine("- No matching Bowel, Sigma, Rectum, Bladder, GTV*, ITV*, or PTV* structures were found.");
+            }
+            else
+            {
+                foreach (StructureResolutionDiagnostic diagnostic in diagnostics)
+                {
+                    report.AppendLine(string.Format(
+                        CultureInfo.InvariantCulture,
+                        "- {0}: before plan copy={1}; after plan copy={2}; at rule preflight={3}; action={4}",
+                        diagnostic.StructureId,
+                        FormatResolution(diagnostic.BeforePlanCopy),
+                        FormatResolution(diagnostic.AfterPlanCopy),
+                        FormatResolution(diagnostic.AtRulePreflight),
+                        diagnostic.Action));
+                }
+            }
+
             report.AppendLine();
 
             if (converted.Count > 0)
@@ -352,6 +474,16 @@ namespace USZ_ARTEMIS.Actions
                 "High-resolution structure report",
                 MessageBoxButtons.OK,
                 failures.Count > 0 ? MessageBoxIcon.Error : MessageBoxIcon.Information);
+        }
+
+        private static string FormatResolution(bool? isHighResolution)
+        {
+            if (!isHighResolution.HasValue)
+            {
+                return "not captured";
+            }
+
+            return isHighResolution.Value ? "high" : "low";
         }
     }
 }

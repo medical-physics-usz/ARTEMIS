@@ -11,7 +11,11 @@ namespace USZ_ARTEMIS.Actions
 {
     partial class Rules
     {
-        public static void ApplyRules(PlanSetup targetPlan, PlanSetup rulesSourcePlan)
+        public static void ApplyRules(
+            PlanSetup targetPlan,
+            PlanSetup rulesSourcePlan,
+            IDictionary<string, bool> beforePlanCopy = null,
+            IDictionary<string, bool> afterPlanCopy = null)
         {
             string rulesPath = RetrieveRulesFile(rulesSourcePlan);
             string path = ResolveRulesFilePath(rulesSourcePlan, rulesPath, "apply");
@@ -34,7 +38,11 @@ namespace USZ_ARTEMIS.Actions
                     ))
                 .ToList();
 
-            if (!PrepareRuleStructuresForHighResolution(targetPlan, toDelete))
+            if (!PrepareRuleStructuresForHighResolution(
+                    targetPlan,
+                    toDelete,
+                    beforePlanCopy,
+                    afterPlanCopy))
             {
                 return;
             }
