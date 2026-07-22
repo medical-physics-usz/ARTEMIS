@@ -40,7 +40,7 @@ def _write_image_series(
     *,
     count: int = 10,
     series_uid: str | None = None,
-    prefix: str = "CT",
+    prefix: str = "MR",
     iop=(1, 0, 0, 0, 1, 0),
     spacing: float = 1.0,
     reverse_instances: bool = False,
@@ -48,7 +48,8 @@ def _write_image_series(
     columns: int = 256,
     pixel_spacing=(1.0, 1.0),
     signed: bool = True,
-    modality: str = "CT",
+    modality: str = "MR",
+    series_description: str = "sCT_sp_Pel_T2",
 ) -> tuple[str, list[tuple[Path, str, np.ndarray]]]:
     series_uid = series_uid or generate_uid()
     row = np.asarray(iop[:3], dtype=float)
@@ -61,6 +62,7 @@ def _write_image_series(
         sop_class_uid = MRImageStorage if modality == "MR" else CTImageStorage
         ds = _file_dataset(path, sop_class_uid, sop_uid)
         ds.Modality = modality
+        ds.SeriesDescription = series_description
         ds.SeriesInstanceUID = series_uid
         ds.StudyInstanceUID = generate_uid()
         ds.FrameOfReferenceUID = generate_uid()
@@ -134,9 +136,10 @@ def _write_rtstruct(
     referenced_series = Dataset()
     referenced_series.SeriesInstanceUID = series_uid
     referenced_series.ContourImageSequence = Sequence()
-    for _, sop_uid, _ in image_records:
+    for image_path, sop_uid, _ in image_records:
         ref = Dataset()
-        ref.ReferencedSOPClassUID = CTImageStorage
+        image_header = pydicom.dcmread(image_path, stop_before_pixels=True)
+        ref.ReferencedSOPClassUID = image_header.SOPClassUID
         ref.ReferencedSOPInstanceUID = sop_uid
         referenced_series.ContourImageSequence.append(ref)
     study.RTReferencedSeriesSequence = Sequence([referenced_series])
@@ -177,18 +180,20 @@ def _write_reg(path: Path, *, series_uid: str, image_records) -> Path:
     referenced_series = Dataset()
     referenced_series.SeriesInstanceUID = series_uid
     referenced_series.ReferencedInstanceSequence = Sequence()
-    for _, sop_uid, _ in image_records:
+    for image_path, sop_uid, _ in image_records:
         reference = Dataset()
-        reference.ReferencedSOPClassUID = CTImageStorage
+        image_header = pydicom.dcmread(image_path, stop_before_pixels=True)
+        reference.ReferencedSOPClassUID = image_header.SOPClassUID
         reference.ReferencedSOPInstanceUID = sop_uid
         referenced_series.ReferencedInstanceSequence.append(reference)
     ds.ReferencedSeriesSequence = Sequence([referenced_series])
 
     registration = Dataset()
     registration.ReferencedImageSequence = Sequence()
-    for _, sop_uid, _ in image_records:
+    for image_path, sop_uid, _ in image_records:
         reference = Dataset()
-        reference.ReferencedSOPClassUID = CTImageStorage
+        image_header = pydicom.dcmread(image_path, stop_before_pixels=True)
+        reference.ReferencedSOPClassUID = image_header.SOPClassUID
         reference.ReferencedSOPInstanceUID = sop_uid
         registration.ReferencedImageSequence.append(reference)
     ds.RegistrationSequence = Sequence([registration])
@@ -221,7 +226,9 @@ def test_crop_keeps_roi_extent_padding_and_updates_references(
     tmp_path: Path, reverse_instances: bool
 ):
     series_uid, images = _write_image_series(
-        tmp_path, reverse_instances=reverse_instances
+        tmp_path,
+        reverse_instances=reverse_instances,
+        series_description="sCT_sp_Pel_T2 Resampled",
     )
     other_uid, other_images = _write_image_series(
         tmp_path, count=3, prefix="OTHER"
@@ -298,6 +305,66 @@ def test_crop_keeps_roi_extent_padding_and_updates_references(
             )
 
 
+@pytest.mark.parametrize(
+    ("modality", "series_description"),
+    [
+        ("CT", "sCT_sp_Pel_T2"),
+        ("MR", "t2_tse_tra"),
+        ("MR", "SCT_sp_Pel_T2"),
+        ("MR", ""),
+    ],
+)
+def test_crop_skips_ineligible_series_without_mutation(
+    tmp_path: Path,
+    modality: str,
+    series_description: str,
+):
+    series_uid, images = _write_image_series(
+        tmp_path,
+        modality=modality,
+        series_description=series_description,
+    )
+    rtstruct_path = _write_rtstruct(
+        tmp_path / "RS_ineligible.dcm",
+        series_uid=series_uid,
+        image_records=images,
+        rois=[("PTV+2cm_Ph", [_contour(3), _contour(6)])],
+    )
+    before = _snapshot(tmp_path)
+
+    result = crop_registered_series(str(tmp_path), series_uid, str(rtstruct_path))
+
+    assert result.status == "skipped"
+    assert result.warning_code == "ineligible_series_for_crop"
+    assert "sCT_sp_Pel_T2" in result.warning
+    assert result.source_series_uid == series_uid
+    assert _snapshot(tmp_path) == before
+
+
+def test_ineligible_series_skips_before_crop_geometry_validation(tmp_path: Path):
+    series_uid, images = _write_image_series(
+        tmp_path,
+        modality="CT",
+        series_description="sCT_sp_Pel_T2",
+    )
+    invalid_slice = pydicom.dcmread(images[-1][0])
+    invalid_slice.PixelSpacing = ["0", "0"]
+    pydicom.dcmwrite(images[-1][0], invalid_slice, enforce_file_format=True)
+    rtstruct_path = _write_rtstruct(
+        tmp_path / "RS_ineligible_geometry.dcm",
+        series_uid=series_uid,
+        image_records=images,
+        rois=[("PTV+2cm_Ph", [_contour(3), _contour(6)])],
+    )
+    before = _snapshot(tmp_path)
+
+    result = crop_registered_series(str(tmp_path), series_uid, str(rtstruct_path))
+
+    assert result.status == "skipped"
+    assert result.warning_code == "ineligible_series_for_crop"
+    assert _snapshot(tmp_path) == before
+
+
 def test_crop_updates_every_rtstruct_and_reg_reference(tmp_path: Path):
     series_uid, images = _write_image_series(tmp_path)
     rtstruct_path = _write_rtstruct(
@@ -317,7 +384,9 @@ def test_crop_updates_every_rtstruct_and_reg_reference(tmp_path: Path):
         other_rtstruct.ROIContourSequence[0].ContourSequence, [0, 4]
     ):
         reference = Dataset()
-        reference.ReferencedSOPClassUID = CTImageStorage
+        reference.ReferencedSOPClassUID = pydicom.dcmread(
+            images[image_index][0], stop_before_pixels=True
+        ).SOPClassUID
         reference.ReferencedSOPInstanceUID = images[image_index][1]
         contour.ContourImageSequence = Sequence([reference])
     pydicom.dcmwrite(other_rtstruct_path, other_rtstruct, enforce_file_format=True)
@@ -395,7 +464,9 @@ def test_crop_rebinds_primary_base_series_contour_references_only(tmp_path: Path
             rtstruct.ROIContourSequence[0].ContourSequence, image_indices
         ):
             reference = Dataset()
-            reference.ReferencedSOPClassUID = CTImageStorage
+            reference.ReferencedSOPClassUID = pydicom.dcmread(
+                base_images[image_index][0], stop_before_pixels=True
+            ).SOPClassUID
             reference.ReferencedSOPInstanceUID = base_images[image_index][1]
             contour.ContourImageSequence = Sequence([reference])
         pydicom.dcmwrite(path, rtstruct, enforce_file_format=True)
@@ -566,11 +637,11 @@ def test_longitudinal_shortfall_skips_crop_and_reports_patient_directions(
 
 
 @pytest.mark.parametrize(
-    "signed, modality",
-    [(True, "CT"), (False, "MR")],
+    "signed",
+    [True, False],
 )
 def test_in_plane_crop_preserves_pixel_representation(
-    tmp_path: Path, signed: bool, modality: str
+    tmp_path: Path, signed: bool
 ):
     series_uid, images = _write_image_series(
         tmp_path,
@@ -579,7 +650,6 @@ def test_in_plane_crop_preserves_pixel_representation(
         columns=512,
         pixel_spacing=(1.5, 2.0),
         signed=signed,
-        modality=modality,
     )
     rtstruct_path = _write_rtstruct(
         tmp_path / "RS_pixels.dcm",
@@ -796,7 +866,7 @@ def test_replacement_failure_rolls_back_all_files(tmp_path: Path, monkeypatch):
         if (
             not failed_once
             and ".crop_staging_" in str(source)
-            and Path(destination).name.startswith("CT_")
+            and Path(destination).name.startswith("MR_")
         ):
             failed_once = True
             raise OSError("simulated replacement failure")
@@ -1109,7 +1179,7 @@ def test_copy_and_crop_crop_transaction_failure_restores_pre_copy_snapshot(
                 if (
                     not failed_once
                     and ".crop_staging_" in str(source)
-                    and Path(destination).name.startswith("CT_")
+                    and Path(destination).name.startswith("MR_")
                 ):
                     failed_once = True
                     raise OSError("simulated replacement failure")

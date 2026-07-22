@@ -19,6 +19,9 @@ from artemis_preprocessing.dicom.copy_structures import copy_structures
 from artemis_preprocessing.utils import get_datetime
 
 
+CROPPABLE_MR_SERIES_DESCRIPTION_PREFIX = "sCT_sp_Pel_T2"
+
+
 @dataclass(frozen=True)
 class CropResult:
     """Outcome of an attempted registered-series crop."""
@@ -61,6 +64,10 @@ class CropSeriesError(RuntimeError):
     """Raised internally when a crop cannot be completed safely."""
 
 
+class IneligibleCropSeriesError(CropSeriesError):
+    """Raised when a series is intentionally excluded from image cropping."""
+
+
 def _as_vector(value, *, length: int, field: str) -> np.ndarray:
     if value is None or len(value) != length:
         raise CropSeriesError(f"Missing or invalid {field}")
@@ -88,6 +95,19 @@ def _load_series_slices(directory: str, series_uid: str) -> tuple[list[_Slice], 
 
     if not records:
         raise CropSeriesError(f"No image slices found for series {series_uid}")
+
+    if any(
+        str(getattr(ds, "Modality", "") or "").strip() != "MR"
+        or not str(
+            getattr(ds, "SeriesDescription", "") or ""
+        ).strip().startswith(CROPPABLE_MR_SERIES_DESCRIPTION_PREFIX)
+        for _, ds in records
+    ):
+        raise IneligibleCropSeriesError(
+            "Only MR series with SeriesDescription starting with "
+            f"'{CROPPABLE_MR_SERIES_DESCRIPTION_PREFIX}' are eligible for "
+            "cropping; leaving the image series unchanged"
+        )
 
     first_iop = _as_vector(
         getattr(records[0][1], "ImageOrientationPatient", None),
@@ -615,10 +635,12 @@ def crop_registered_series(
     padding_slices: int = 2,
     in_plane_crop_pixels: int = 96,
 ) -> CropResult:
-    """Crop *series_uid* to a uniquely matching contoured ROI.
+    """Crop an eligible sCT MR *series_uid* to a matching contoured ROI.
 
-    Ambiguous or absent matching contours are deliberately treated as a safe
-    no-op. Geometry, write, and deletion failures return ``status="failed"``.
+    Only MR series whose Series Description starts with
+    ``sCT_sp_Pel_T2`` are eligible. Ineligible series and ambiguous or absent
+    matching contours are deliberately treated as safe no-ops. Geometry,
+    write, and deletion failures return ``status="failed"``.
     """
 
     try:
@@ -794,6 +816,13 @@ def crop_registered_series(
             cropped_columns=cropped_columns,
             source_series_uid=str(series_uid),
             derived_series_uid=derived_series_uid,
+        )
+    except IneligibleCropSeriesError as exc:
+        return CropResult(
+            status="skipped",
+            source_series_uid=str(series_uid),
+            warning=str(exc),
+            warning_code="ineligible_series_for_crop",
         )
     except Exception as exc:
         return CropResult(status="failed", error=str(exc))
