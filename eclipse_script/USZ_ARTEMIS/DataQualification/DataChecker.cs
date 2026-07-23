@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using USZ_ARTEMIS.Core.Planning;
 using USZ_ARTEMIS.StructureCreation;
 using VMS.TPS.Common.Model.API;
 
@@ -73,10 +74,10 @@ namespace USZ_ARTEMIS.DataQualification
             }
 
             var ptvs = structureSet.Structures
-                .Where(structure =>
-                    !structure.IsEmpty &&
-                    !string.IsNullOrWhiteSpace(structure.DicomType) &&
-                    structure.DicomType.Equals("PTV", StringComparison.OrdinalIgnoreCase))
+                .Where(structure => PtvContainmentSelection.IsCandidate(
+                    structure.Id,
+                    structure.DicomType,
+                    structure.IsEmpty))
                 .OrderBy(structure => structure.Id)
                 .ToList();
 
