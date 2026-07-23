@@ -54,8 +54,17 @@ python -m pytest
 
 ## C# / ESAPI Development
 
+- The production target for `eclipse_script/` is Varian ESAPI 18.1. Compile and validate against the ESAPI 18.1 assemblies and installed Online Help on the licensed Windows workstation. Do not treat the ESAPI 17.0 reference archive as the target runtime.
 - Put ESAPI- and WPF-independent logic in `eclipse_script/USZ_ARTEMIS.Core/` and cover it in `USZ_ARTEMIS.Core.Tests/`.
 - Keep Varian, WPF, and Eclipse-dependent code in `eclipse_script/USZ_ARTEMIS/`. Do not add those references to the cross-platform core or offline test solution.
+
+### Core Assembly Deployment Boundary
+
+- `USZ_ARTEMIS` and `USZ_ARTEMIS.Core` are separate projects, but the production Costura configuration embeds `USZ_ARTEMIS.Core` in the generated ESAPI plugin. Adding, changing, or removing a Core type or member used by the main project is therefore a deployment-impacting change, even when the source change is small.
+- When the main project starts using a new or changed Core API, rebuild the full ESAPI solution and deploy the newly generated main ESAPI assembly so it contains the matching embedded Core code.
+- Do not deploy a standalone `USZ_ARTEMIS.Core.dll` unless the packaging configuration is intentionally changed to require it. Remove stale standalone Core copies from deployment locations and restart Eclipse before validation; otherwise the runtime may load the stale file instead of the embedded version.
+- During review and handoff, explicitly identify new main-to-Core references and confirm that the production ESAPI assembly was rebuilt after the Core change.
+- Small predicates used only within one ESAPI-dependent workflow may remain in the main project when extracting them solely for testability would create unnecessary cross-assembly deployment coupling.
 
 ### Using the Local ESAPI References
 
@@ -63,6 +72,7 @@ The repository-local, read-only references are under `reference/` (singular). Re
 
 - Use `reference/esapi-docs-17.0/catalog.jsonl` to locate exact ESAPI 17.0 type names, member names, UIDs, assemblies, and signatures. Then open the matching file under `reference/esapi-docs-17.0/docs/` for declarations, remarks, parameters, return values, exceptions, and inherited members.
 - Use `reference/esapi-guide-18.1/` for ESAPI/Eclipse compatibility, upgrade guidance, scripting and deployment workflows, Plan Checker behavior, and the selected 18.1 additions documented by the vendor guide. Start with its `README.md`, then follow the topic files it indexes.
+- Use the two sources together: treat the 17.0 archive as the exact 17.0 baseline and the 18.1 guide as a documented-differences overlay. The guide contains selected 18.1 additions and 18.0 compatibility and assembly-version metadata, but not a complete 17.0-to-18.0 delta or a complete member-level 18.1 reference.
 - Search from the repository root instead of scanning the whole archive manually. For example:
 
 ```bash
