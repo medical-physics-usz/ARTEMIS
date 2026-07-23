@@ -49,7 +49,7 @@ import gc
 
 
 def _crop_coverage_warning_message(crop_result: dict) -> str | None:
-    """Build the user warning when an ROI prevents safe image cropping."""
+    """Build the user warning when an ROI exceeds an acquired or crop FOV."""
 
     warning_code = crop_result.get("warning_code")
     roi_name = crop_result.get("roi_name") or "the +2cm_Ph structure"
@@ -1243,7 +1243,7 @@ def main():
                         if automation_triggered:
                             automation_log(coverage_warning.replace("\n", " "))
                         messagebox.showwarning(
-                            "Image crop skipped",
+                            "Image coverage warning",
                             coverage_warning,
                         )
                 else:
