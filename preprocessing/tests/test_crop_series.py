@@ -365,6 +365,111 @@ def test_ineligible_series_skips_before_crop_geometry_validation(tmp_path: Path)
     assert _snapshot(tmp_path) == before
 
 
+def test_uncroppable_mr_still_checks_longitudinal_coverage(tmp_path: Path):
+    series_uid, images = _write_image_series(
+        tmp_path,
+        series_description="t2_tse_tra",
+    )
+    rtstruct_path = _write_rtstruct(
+        tmp_path / "RS_uncropped_short_coverage.dcm",
+        series_uid=series_uid,
+        image_records=images,
+        rois=[("PTV+2cm_Ph", [_contour(-2), _contour(6)])],
+    )
+    before = _snapshot(tmp_path)
+
+    result = crop_registered_series(str(tmp_path), series_uid, str(rtstruct_path))
+
+    assert result.status == "skipped"
+    assert result.warning_code == "insufficient_longitudinal_coverage"
+    assert result.caudal_missing_mm == pytest.approx(1.5)
+    assert result.cranial_missing_mm == pytest.approx(0.0)
+    assert _snapshot(tmp_path) == before
+
+
+def test_uncroppable_mr_still_checks_acquired_in_plane_coverage(tmp_path: Path):
+    series_uid, images = _write_image_series(
+        tmp_path,
+        series_description="t2_tse_tra",
+    )
+    rtstruct_path = _write_rtstruct(
+        tmp_path / "RS_uncropped_outside_fov.dcm",
+        series_uid=series_uid,
+        image_records=images,
+        rois=[
+            (
+                "PTV+2cm_Ph",
+                [
+                    _contour(3, offset=(-140, 0, 0)),
+                    _contour(6, offset=(-140, 0, 0)),
+                ],
+            )
+        ],
+    )
+    before = _snapshot(tmp_path)
+
+    result = crop_registered_series(str(tmp_path), series_uid, str(rtstruct_path))
+
+    assert result.status == "skipped"
+    assert result.warning_code == "insufficient_in_plane_coverage"
+    assert _snapshot(tmp_path) == before
+
+
+def test_uncroppable_mr_does_not_apply_proposed_crop_margin(tmp_path: Path):
+    series_uid, images = _write_image_series(
+        tmp_path,
+        series_description="t2_tse_tra",
+    )
+    rtstruct_path = _write_rtstruct(
+        tmp_path / "RS_uncropped_inside_acquired_fov.dcm",
+        series_uid=series_uid,
+        image_records=images,
+        rois=[
+            (
+                "PTV+2cm_Ph",
+                [
+                    _contour(3, offset=(-100, 0, 0)),
+                    _contour(6, offset=(-100, 0, 0)),
+                ],
+            )
+        ],
+    )
+    before = _snapshot(tmp_path)
+
+    result = crop_registered_series(str(tmp_path), series_uid, str(rtstruct_path))
+
+    assert result.status == "skipped"
+    assert result.warning_code == "ineligible_series_for_crop"
+    assert _snapshot(tmp_path) == before
+
+
+def test_uncroppable_mr_coverage_check_does_not_require_decodable_pixels(
+    tmp_path: Path,
+):
+    series_uid, images = _write_image_series(
+        tmp_path,
+        series_description="t2_tse_tra",
+    )
+    changed = pydicom.dcmread(images[-1][0])
+    changed.file_meta.TransferSyntaxUID = JPEGBaseline8Bit
+    changed.PixelData = encapsulate([changed.PixelData])
+    changed["PixelData"].is_undefined_length = True
+    pydicom.dcmwrite(images[-1][0], changed, enforce_file_format=True)
+    rtstruct_path = _write_rtstruct(
+        tmp_path / "RS_uncropped_compressed.dcm",
+        series_uid=series_uid,
+        image_records=images,
+        rois=[("PTV+2cm_Ph", [_contour(-2), _contour(6)])],
+    )
+    before = _snapshot(tmp_path)
+
+    result = crop_registered_series(str(tmp_path), series_uid, str(rtstruct_path))
+
+    assert result.status == "skipped"
+    assert result.warning_code == "insufficient_longitudinal_coverage"
+    assert _snapshot(tmp_path) == before
+
+
 def test_crop_updates_every_rtstruct_and_reg_reference(tmp_path: Path):
     series_uid, images = _write_image_series(tmp_path)
     rtstruct_path = _write_rtstruct(
@@ -766,6 +871,28 @@ def test_dimensions_must_exceed_twice_crop_amount(tmp_path: Path):
     assert _snapshot(tmp_path) == before
 
 
+def test_invalid_crop_dimensions_fail_before_coverage_warning(tmp_path: Path):
+    series_uid, images = _write_image_series(
+        tmp_path,
+        count=4,
+        rows=192,
+        columns=256,
+    )
+    rtstruct_path = _write_rtstruct(
+        tmp_path / "RS_small_short_coverage.dcm",
+        series_uid=series_uid,
+        image_records=images,
+        rois=[("PTV+2cm_Ph", [_contour(-2), _contour(2)])],
+    )
+    before = _snapshot(tmp_path)
+
+    result = crop_registered_series(str(tmp_path), series_uid, str(rtstruct_path))
+
+    assert result.status == "failed"
+    assert "must both exceed" in result.error
+    assert _snapshot(tmp_path) == before
+
+
 def test_inconsistent_in_plane_geometry_fails_without_mutation(tmp_path: Path):
     series_uid, images = _write_image_series(tmp_path, count=4)
     changed = pydicom.dcmread(images[-1][0])
@@ -1095,6 +1222,44 @@ def test_copy_and_crop_in_plane_skip_keeps_structures_and_full_image_fov(
 
     assert result.status == "skipped"
     assert result.warning_code == "insufficient_in_plane_crop_margin"
+    assert pydicom.dcmread(rtstruct_path).StructureSetLabel == "COPIED"
+    assert {path: _sha256(path) for path, _, _ in images} == image_hashes
+
+
+def test_copy_and_crop_uncroppable_mr_coverage_warning_keeps_copied_structures(
+    tmp_path: Path, monkeypatch
+):
+    series_uid, images = _write_image_series(
+        tmp_path,
+        series_description="t2_tse_tra",
+    )
+    rtstruct_path = _write_rtstruct(
+        tmp_path / f"RS_{series_uid}.dcm",
+        series_uid=series_uid,
+        image_records=images,
+        rois=[("PTV+2cm_Ph", [_contour(-2), _contour(6)])],
+    )
+    image_hashes = {path: _sha256(path) for path, _, _ in images}
+
+    def fake_copy(*args, **kwargs):
+        dataset = pydicom.dcmread(rtstruct_path)
+        dataset.StructureSetLabel = "COPIED"
+        pydicom.dcmwrite(rtstruct_path, dataset, write_like_original=False)
+        return str(rtstruct_path)
+
+    monkeypatch.setattr(crop_series, "copy_structures", fake_copy)
+
+    result = crop_series.copy_structures_and_crop(
+        str(tmp_path),
+        "patient",
+        "plan",
+        object(),
+        series_uid=series_uid,
+        base_series_uid="4.5.6",
+    )
+
+    assert result.status == "skipped"
+    assert result.warning_code == "insufficient_longitudinal_coverage"
     assert pydicom.dcmread(rtstruct_path).StructureSetLabel == "COPIED"
     assert {path: _sha256(path) for path, _, _ in images} == image_hashes
 
