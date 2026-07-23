@@ -72,6 +72,7 @@ The repository-local, read-only references are under `reference/` (singular). Re
 
 - Use `reference/esapi-docs-17.0/catalog.jsonl` to locate exact ESAPI 17.0 type names, member names, UIDs, assemblies, and signatures. Then open the matching file under `reference/esapi-docs-17.0/docs/` for declarations, remarks, parameters, return values, exceptions, and inherited members.
 - Use `reference/esapi-guide-18.1/` for ESAPI/Eclipse compatibility, upgrade guidance, scripting and deployment workflows, Plan Checker behavior, and the selected 18.1 additions documented by the vendor guide. Start with its `README.md`, then follow the topic files it indexes.
+- Use the two sources together: treat the 17.0 archive as the exact 17.0 baseline and the 18.1 guide as a documented-differences overlay. The guide contains selected 18.1 additions and 18.0 compatibility and assembly-version metadata, but not a complete 17.0-to-18.0 delta or a complete member-level 18.1 reference.
 - Search from the repository root instead of scanning the whole archive manually. For example:
 
 ```bash
