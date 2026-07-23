@@ -75,6 +75,8 @@ namespace USZ_ARTEMIS.DataQualification
             var ptvs = structureSet.Structures
                 .Where(structure =>
                     !structure.IsEmpty &&
+                    !string.IsNullOrWhiteSpace(structure.Id) &&
+                    structure.Id.StartsWith("PTV", StringComparison.OrdinalIgnoreCase) &&
                     !string.IsNullOrWhiteSpace(structure.DicomType) &&
                     structure.DicomType.Equals("PTV", StringComparison.OrdinalIgnoreCase))
                 .OrderBy(structure => structure.Id)
