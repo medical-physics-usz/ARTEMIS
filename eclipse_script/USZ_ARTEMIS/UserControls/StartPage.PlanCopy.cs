@@ -451,6 +451,9 @@ namespace USZ_ARTEMIS
                 // MessageBox.Show($"Copied BODY structure code updated to: {copiedBody.StructureCode}");
             }
 
+            var objectiveFilter = new PlanCopyObjectiveFilter(
+                originalPlan.GetClinicalGoals().Select(goal => goal.StructureId));
+
             foreach (var objective in originalPlan.OptimizationSetup.Objectives)
             {
                 var originalStructure = objective.Structure;
@@ -465,6 +468,13 @@ namespace USZ_ARTEMIS
                 }
 
                 var structureKey = originalStructure.Id.Trim();
+                if (!objectiveFilter.ShouldCopy(
+                    structureKey,
+                    objective is OptimizationMeanDoseObjective))
+                {
+                    continue;
+                }
+
                 if (!structureLookup.TryGetValue(structureKey, out var copiedStructure))
                 {
                     MessageBox.Show(
