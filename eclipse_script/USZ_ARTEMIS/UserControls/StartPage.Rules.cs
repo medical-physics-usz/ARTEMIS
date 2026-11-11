@@ -18,6 +18,7 @@ namespace USZ_ARTEMIS
                 if (ruleType == "Intersect") { Actions.Rules.CreateIntersection(GetSelectedPlan()); }
                 if (ruleType == "Create SBRT ring") { Actions.Rules.CreateSbrtRing(GetSelectedPlan()); }
                 if (ruleType == "Create RectalWall") { Actions.Rules.CreateRectalWall(GetSelectedPlan()); }
+                if (ruleType == "Create CTV1") { Actions.Rules.CreateCtv1(GetSelectedPlan()); }
             }
             else
             {

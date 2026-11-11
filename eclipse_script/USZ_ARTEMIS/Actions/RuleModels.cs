@@ -12,7 +12,8 @@ namespace USZ_ARTEMIS.Actions
         Addition,
         Intersection,
         SbrtRing,
-        RectalWall
+        RectalWall,
+        Ctv1
     }
 
     public class StructureRule

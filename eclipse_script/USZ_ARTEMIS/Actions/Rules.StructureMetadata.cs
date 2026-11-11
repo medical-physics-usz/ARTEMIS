@@ -128,6 +128,12 @@ namespace USZ_ARTEMIS.Actions
         {
             foreach (StructureRule rule in ruleSet.Rules ?? new List<StructureRule>())
             {
+                if (rule.Type == RuleType.Ctv1)
+                {
+                    yield return Ctv1Rule.GetStructureUse(rule.OutputStructure);
+                    continue;
+                }
+
                 var inputs = new List<string>(
                     rule.InputStructures ?? new List<string>());
                 var outputs = new List<string>();

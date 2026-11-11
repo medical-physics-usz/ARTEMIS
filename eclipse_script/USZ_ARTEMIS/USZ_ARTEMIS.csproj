@@ -167,6 +167,7 @@
     <Reference Include="PresentationFramework" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Actions\Ctv1Rule.cs" />
     <Compile Include="Actions\RuleModels.cs" />
     <Compile Include="Actions\Rules.cs" />
     <Compile Include="Actions\Rules.Execution.cs" />

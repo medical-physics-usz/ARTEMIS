@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\USZ_ARTEMIS.Core\USZ_ARTEMIS.Core.csproj" />
+    <Compile Include="..\USZ_ARTEMIS\Actions\Ctv1Rule.cs" Link="Rules\Ctv1Rule.cs" />
     <Compile Include="..\USZ_ARTEMIS\DataExtraction\CouchDataExtractor.cs" Link="DataExtraction\CouchDataExtractor.cs" />
     <Compile Include="..\USZ_ARTEMIS\Tools\PlanCopyMaterialTable.cs" Link="Planning\PlanCopyMaterialTable.cs" />
     <Compile Include="..\USZ_ARTEMIS\Tools\PlanCopyStructureReminders.cs" Link="Planning\PlanCopyStructureReminders.cs" />
