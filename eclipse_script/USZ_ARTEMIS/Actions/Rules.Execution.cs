@@ -35,10 +35,16 @@ namespace USZ_ARTEMIS.Actions
 
             var ruleSet = LoadRulesFromPath(path, targetPlan);
             StructureSet structureSet = targetPlan.StructureSet;
+            var ctvRules = ruleSet.Rules.Where(rule => GetCtvCreationRule(rule.Type) != null).ToList();
+            // CTV creation outputs are updated in place to preserve their structure metadata.
+            var ctvOutputIds = new HashSet<string>(
+                ctvRules.SelectMany(rule => GetCtvCreationRule(rule.Type).GetOutputIds(rule.OutputStructure)),
+                StringComparer.OrdinalIgnoreCase);
             var toDelete = structureSet.Structures
                 .Where(s =>
                     !string.IsNullOrWhiteSpace(s.Id) &&
                     s.Id.EndsWith("_ph", StringComparison.OrdinalIgnoreCase) &&
+                    !ctvOutputIds.Contains(s.Id.Trim()) &&
                     !(
                         (s.Id.StartsWith("ptv", StringComparison.OrdinalIgnoreCase)
                          && s.Id.EndsWith("+2cm_ph", StringComparison.OrdinalIgnoreCase))
@@ -99,6 +105,15 @@ namespace USZ_ARTEMIS.Actions
 
             try
             {
+                foreach (var rule in ctvRules)
+                {
+                    string error = GetCtvCreationRule(rule.Type).GetTargetIdError(rule.OutputStructure);
+                    if (error.Length > 0)
+                    {
+                        throw new InvalidOperationException(error);
+                    }
+                }
+
                 foreach (var structure in toDelete)
                 {
                     structureSet.RemoveStructure(structure);
@@ -115,6 +130,13 @@ namespace USZ_ARTEMIS.Actions
                 foreach (var rule in ruleSet.Rules)
                 {
                     string outputId = rule.OutputStructure;
+                    CtvCreationRule ctv = GetCtvCreationRule(rule.Type);
+                    if (ctv != null)
+                    {
+                        ApplyCtv(targetPlan, outputId, ctv);
+                        continue;
+                    }
+
                     if (!string.IsNullOrEmpty(outputId))
                     {
                         var outStruct = FindExistingStructure(
@@ -197,7 +219,7 @@ namespace USZ_ARTEMIS.Actions
                 MessageBox.Show(
                     "Rule application stopped before completion:\n\n" +
                     e.Message +
-                    "\n\nDo not save the incomplete copied plan. Correct the problem or " +
+                    "\n\nDo not save the incomplete plan. Correct the problem or " +
                     "discard the current Eclipse modifications before trying again.",
                     "Rule application failed",
                     MessageBoxButtons.OK,
@@ -487,6 +509,129 @@ namespace USZ_ARTEMIS.Actions
 
             SelectedPlan.StructureSet.RemoveStructure(bodyHR_Ph);
             SelectedPlan.StructureSet.RemoveStructure(rectalWallHelp);
+        }
+
+        private static void ApplyCtv(PlanSetup selectedPlan, string targetId, CtvCreationRule rule)
+        {
+            StructureSet structureSet = selectedPlan.StructureSet;
+            Structure prostate = FindRequiredInputStructure(selectedPlan, CtvCreationRule.Prostate);
+            Structure seminalVesicle = FindRequiredInputStructure(selectedPlan, CtvCreationRule.SeminalVesicle);
+            foreach (Structure input in new[] { prostate, seminalVesicle })
+            {
+                if (input.IsEmpty)
+                {
+                    throw new InvalidOperationException($"{rule.Name} requires geometry in '{input.Id}'.");
+                }
+            }
+
+            var outputs = rule.GetOutputIds(targetId)
+                .Select((id, index) => (
+                    Id: id,
+                    Type: index < 2 ? "CONTROL" : "CTV",
+                    Existing: FindExistingStructure(structureSet, id)))
+                .ToArray();
+            foreach (var output in outputs)
+            {
+                Structure existing = output.Existing;
+                if (existing == null)
+                {
+                    if (!structureSet.CanAddStructure(output.Type, output.Id))
+                    {
+                        throw new InvalidOperationException($"ESAPI cannot create '{output.Id}' with Volume Type '{output.Type}'.");
+                    }
+
+                    continue;
+                }
+
+                if (output.Type == "CTV")
+                {
+                    VerifyVolumeType(existing, output.Type);
+                }
+
+                if (existing.IsApproved)
+                {
+                    throw new InvalidOperationException($"{rule.Name} cannot update approved structure '{existing.Id}'.");
+                }
+
+                if (!existing.CanEditSegmentVolume(out string error))
+                {
+                    throw new InvalidOperationException($"{rule.Name} cannot edit '{existing.Id}': {error}");
+                }
+            }
+
+            bool useHighResolution = prostate.IsHighResolution || seminalVesicle.IsHighResolution ||
+                outputs.Any(output => output.Existing?.IsHighResolution == true);
+            var temporaryStructures = new List<Structure>();
+            try
+            {
+                SegmentVolume prostateVolume = GetCtvInputVolume(structureSet, prostate, useHighResolution, temporaryStructures);
+                SegmentVolume seminalVesicleVolume = GetCtvInputVolume(structureSet, seminalVesicle, useHighResolution, temporaryStructures);
+                var margins = new AxisAlignedMargins(
+                    StructureMarginGeometry.Outer, 0, 0, 0, 0, rule.ExpansionMm, rule.ExpansionMm);
+                SegmentVolume expandedProstate = prostateVolume.AsymmetricMargin(margins);
+                SegmentVolume seminalVesicleBase = expandedProstate.And(seminalVesicleVolume);
+                SegmentVolume ctv = prostateVolume.Or(seminalVesicleBase);
+                SegmentVolume cleanedCtv = ctv.Margin(CtvCreationRule.ClosingMarginMm)
+                    .Margin(-CtvCreationRule.ClosingMarginMm);
+                var volumes = new[] { expandedProstate, seminalVesicleBase, ctv, cleanedCtv };
+
+                var structures = outputs.Select(output =>
+                    output.Existing ?? structureSet.AddStructure(output.Type, output.Id)).ToArray();
+                if (useHighResolution)
+                {
+                    foreach (Structure structure in structures)
+                    {
+                        ConvertCtvStructureToHighResolution(structure);
+                    }
+                }
+
+                for (int index = 0; index < structures.Length; index++)
+                {
+                    structures[index].SegmentVolume = volumes[index];
+                }
+
+                if (structures[2].IsEmpty || structures[3].IsEmpty)
+                {
+                    throw new InvalidOperationException($"{rule.Name} produced an empty target or closed contour.");
+                }
+            }
+            finally
+            {
+                foreach (Structure structure in temporaryStructures)
+                {
+                    structureSet.RemoveStructure(structure);
+                }
+            }
+        }
+
+        private static SegmentVolume GetCtvInputVolume(
+            StructureSet structureSet, Structure source, bool useHighResolution, ICollection<Structure> temporaryStructures)
+        {
+            if (!useHighResolution || source.IsHighResolution)
+            {
+                return source.SegmentVolume;
+            }
+
+            // Match the Boolean operands' resolutions without modifying the source contour.
+            string temporaryId = "Ctv_" + Guid.NewGuid().ToString("N").Substring(0, 10);
+            Structure copy = structureSet.AddStructure("CONTROL", temporaryId);
+            temporaryStructures.Add(copy);
+            copy.SegmentVolume = source.SegmentVolume;
+            ConvertCtvStructureToHighResolution(copy);
+            return copy.SegmentVolume;
+        }
+
+        private static void ConvertCtvStructureToHighResolution(Structure structure)
+        {
+            if (!structure.IsHighResolution && structure.CanConvertToHighResolution())
+            {
+                structure.ConvertToHighResolution();
+            }
+
+            if (!structure.IsHighResolution)
+            {
+                throw new InvalidOperationException($"Could not convert '{structure.Id}' to high resolution during CTV creation.");
+            }
         }
 
         private static Structure FindRequiredInputStructure(

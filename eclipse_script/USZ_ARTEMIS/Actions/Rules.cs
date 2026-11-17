@@ -360,7 +360,11 @@ namespace USZ_ARTEMIS.Actions
             popupForm.Height = 150;
 
             ComboBox comboBox = new ComboBox();
-            comboBox.Items.AddRange(new string[] { "Expand", "Subtract", "Add", "Intersect", "Create SBRT ring", "Create RectalWall" });
+            comboBox.Items.AddRange(new string[]
+            {
+                "Expand", "Subtract", "Add", "Intersect", "Create SBRT ring", "Create RectalWall",
+                CtvCreationRule.Ctv1.Name, CtvCreationRule.Ctv2.Name
+            });
             comboBox.DropDownStyle = ComboBoxStyle.DropDownList;
             comboBox.Location = new System.Drawing.Point(30, 20);
             comboBox.Width = 200;
@@ -1063,6 +1067,56 @@ namespace USZ_ARTEMIS.Actions
             SaveRulesForPlan(SelectedPlan, ruleSet);
         }
 
+        private static CtvCreationRule GetCtvCreationRule(RuleType type)
+        {
+            switch (type)
+            {
+                case RuleType.Ctv1: return CtvCreationRule.Ctv1;
+                case RuleType.Ctv2: return CtvCreationRule.Ctv2;
+                default: return null;
+            }
+        }
+
+        internal static void CreateCtv(PlanSetup selectedPlan, RuleType type)
+        {
+            CtvCreationRule ctv = GetCtvCreationRule(type);
+            string targetId = SelectStructure(selectedPlan, $"Target structure for {ctv.Name}", allowCustomName: true);
+            if (targetId == null)
+            {
+                return;
+            }
+
+            string error = ctv.GetTargetIdError(targetId);
+            Structure existing = FindExistingStructure(selectedPlan.StructureSet, targetId);
+            if (error.Length == 0 && existing != null &&
+                !string.Equals(existing.DicomType, "CTV", StringComparison.OrdinalIgnoreCase))
+            {
+                error = $"'{targetId}' must have Volume Type CTV to be used as the target.";
+            }
+
+            if (error.Length > 0)
+            {
+                MessageBox.Show(error, ctv.Name, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            var ruleSet = LoadRulesForPlan(selectedPlan);
+            int insertionIndex = ctv.FindInsertionIndex(BuildOrderedRuleUses(ruleSet).ToList(), targetId);
+            if (insertionIndex < 0)
+            {
+                MessageBox.Show(
+                    "In Edit Rules, move rules that produce Prostate or SeminalVesicle above the first rule " +
+                    $"that uses a {ctv.Name} output, then add {ctv.Name} again.",
+                    ctv.Name,
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
+
+            ruleSet.Rules.Insert(insertionIndex, new StructureRule { Type = type, OutputStructure = targetId });
+            SaveRulesForPlan(selectedPlan, ruleSet);
+        }
+
         // ----------------- VIEW / DELETE / EDIT -----------------
 
 
@@ -1190,6 +1244,9 @@ namespace USZ_ARTEMIS.Actions
                     }
                 case RuleType.RectalWall:
                     return "RectalWall_Ph = Automatic generation";
+                case RuleType.Ctv1:
+                case RuleType.Ctv2:
+                    return GetCtvCreationRule(rule.Type).Name;
                 default:
                     return $"{rule.OutputStructure} = {rule.Type}";
             }

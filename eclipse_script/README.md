@@ -27,8 +27,8 @@ USZ_ARTEMIS.Core.Tests -> USZ_ARTEMIS.Core
 `USZ_ARTEMIS` and `USZ_ARTEMIS.Core.Tests` must not reference each other. The C#
 namespaces and ESAPI entry point remain stable. The production target is
 ESAPI 19.0 / Eclipse 19.0, .NET Framework 4.8, and x64. The current plugin is
-`USZ_ARTEMIS_v26.11.11.0.esapi.dll`, with assembly, file, and informational
-version `26.11.11.0`.
+`USZ_ARTEMIS_v26.11.17.1.esapi.dll`, with assembly, file, and informational
+version `26.11.17.1`.
 
 ## Required Local Files
 
