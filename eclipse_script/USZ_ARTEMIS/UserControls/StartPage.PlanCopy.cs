@@ -4,9 +4,11 @@ using System.Linq;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
+using USZ_ARTEMIS.Configuration;
 using USZ_ARTEMIS.Core.Planning;
 using USZ_ARTEMIS.DataExtraction;
 using USZ_ARTEMIS.StructureCreation;
+using USZ_ARTEMIS.Tools;
 using VMS.TPS.Common.Model.API;
 using VMS.TPS.Common.Model.Types;
 
@@ -61,6 +63,7 @@ namespace USZ_ARTEMIS
 
         private void RetargetPlanToMachine(ExternalPlanSetup plan, string machineId)
         {
+            bool requireExactGeometry = DoseCheckLauncher.IsAccelaMachine(machineId);
             var originalBeams = plan.Beams.OrderBy(b => b.BeamNumber).ToList();
             var beamIdMap = new Dictionary<Beam, string>();
             var beamNameMap = new Dictionary<Beam, string>();
@@ -105,14 +108,7 @@ namespace USZ_ARTEMIS
                     var mw = cpsOld.Select(cp => cp.MetersetWeight).ToList();
                     bNew = plan.AddVMATBeam(mp, mw, col, gantryStart, gantryStop, dir, couch, iso);
 
-                    var editable = bNew.GetEditableParameters();
-                    var cpsNew = editable.ControlPoints.ToList();
-                    for (int i = 0; i < cpsNew.Count && i < cpsOld.Count; i++)
-                    {
-                        cpsNew[i].LeafPositions = cpsOld[i].LeafPositions;
-                        cpsNew[i].JawPositions = cpsOld[i].JawPositions;
-                    }
-                    bNew.ApplyParameters(editable);
+                    CopyControlPointGeometry(b, bNew, requireExactGeometry);
                 }
                 else
                 {
@@ -127,14 +123,7 @@ namespace USZ_ARTEMIS
                         else
                             bNew = plan.AddSlidingWindowBeam(mp, mw, col, gantry, couch, iso);
 
-                        var editable = bNew.GetEditableParameters();
-                        var cpsNew = editable.ControlPoints.ToList();
-                        for (int i = 0; i < cpsNew.Count && i < cpsOld.Count; i++)
-                        {
-                            cpsNew[i].LeafPositions = cpsOld[i].LeafPositions;
-                            cpsNew[i].JawPositions = cpsOld[i].JawPositions;
-                        }
-                        bNew.ApplyParameters(editable);
+                        CopyControlPointGeometry(b, bNew, requireExactGeometry);
                     }
                     else if (hasMlc)
                     {
@@ -145,6 +134,9 @@ namespace USZ_ARTEMIS
                         bNew = plan.AddStaticBeam(mp, jaw0, col, gantry, couch, iso);
                     }
                 }
+
+                if (requireExactGeometry)
+                    ValidateAccelaBeam(b, bNew, machineId);
 
                 beamIdMap[bNew] = b.Id;
                 beamNameMap[bNew] = b.Name;
@@ -167,6 +159,75 @@ namespace USZ_ARTEMIS
                 {
                     kv.Key.Name = kv.Value;
                 }
+            }
+        }
+
+        private static void CopyControlPointGeometry(Beam source, Beam destination, bool requireExactGeometry)
+        {
+            var editable = destination.GetEditableParameters();
+            var sourcePoints = source.ControlPoints;
+            var destinationPoints = editable.ControlPoints.ToList();
+            if (requireExactGeometry && destinationPoints.Count != sourcePoints.Count)
+                throw new InvalidOperationException($"Beam '{source.Id}' has an incompatible editable control-point count on Accela.");
+
+            for (int i = 0; i < destinationPoints.Count && i < sourcePoints.Count; i++)
+            {
+                var sourceLeaves = sourcePoints[i].LeafPositions;
+                if (requireExactGeometry)
+                    ValidateAccelaLeafGeometry(source.Id, sourceLeaves, destinationPoints[i].LeafPositions);
+
+                destinationPoints[i].LeafPositions = sourceLeaves;
+                destinationPoints[i].JawPositions = sourcePoints[i].JawPositions;
+            }
+            destination.ApplyParameters(editable);
+        }
+
+        private static void ValidateAccelaBeam(Beam source, Beam destination, string machineId)
+        {
+            if (!string.Equals(destination.TreatmentUnit?.Id, machineId, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(source.MLC?.Id, destination.MLC?.Id, StringComparison.Ordinal)
+                || source.ControlPoints.Count != destination.ControlPoints.Count)
+                throw new InvalidOperationException(
+                    $"Beam '{source.Id}' has incompatible treatment unit, MLC, or control points on {machineId}.");
+
+            for (int i = 0; i < source.ControlPoints.Count; i++)
+                ValidateAccelaLeafGeometry(source.Id, source.ControlPoints[i].LeafPositions,
+                    destination.ControlPoints[i].LeafPositions);
+        }
+
+        private static void ValidateAccelaLeafGeometry(string beamId, float[,] sourceLeaves, float[,] destinationLeaves)
+        {
+            if (sourceLeaves.GetLength(0) != destinationLeaves.GetLength(0)
+                || sourceLeaves.GetLength(1) != destinationLeaves.GetLength(1))
+                throw new InvalidOperationException($"Beam '{beamId}' has incompatible MLC leaf geometry on Accela.");
+        }
+
+        private bool TryRetargetAccelaPlan(PlanSetup copiedPlan, string machineId)
+        {
+            try
+            {
+                RetargetPlanToMachine((ExternalPlanSetup)copiedPlan, machineId);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                string cleanup = "The incomplete copy was removed.";
+                try
+                {
+                    var course = copiedPlan.Course;
+                    if (!course.CanRemovePlanSetup(copiedPlan))
+                        throw new InvalidOperationException("Eclipse would not allow removal of the incomplete plan.");
+                    course.RemovePlanSetup(copiedPlan);
+                }
+                catch (Exception cleanupError)
+                {
+                    cleanup = "Remove the incomplete plan or discard the current Eclipse modifications before saving.\n"
+                        + cleanupError.Message;
+                }
+
+                MessageBox.Show($"Could not retarget the copied plan to {machineId}.\n\n{ex.Message}\n\n{cleanup}",
+                    "Treatment Unit Change", MessageBoxButton.OK, MessageBoxImage.Error);
+                return false;
             }
         }
 
@@ -370,11 +431,26 @@ namespace USZ_ARTEMIS
                 return;
             }
 
+            string targetMachineId = GetSelectedMachineId();
+            bool isAccelaCopy = DoseCheckLauncher.IsAccelaMachine(targetMachineId);
+            if (isAccelaCopy && (!AppPaths.AccelaPlanCopyEnabled || !(originalPlan is ExternalPlanSetup)))
+            {
+                MessageBox.Show(!AppPaths.AccelaPlanCopyEnabled
+                        ? "Accela plan copying requires a commissioned configuration with AccelaPlanCopyEnabled set to true."
+                        : "Select an external beam base plan for Accela plan copying.",
+                    "Plan Copy Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
             string materialTableWarning = Tools.PlanCopyMaterialTable.CheckCompatibility(
                 newStructureSet.GetPhysicalMaterialTable,
                 newStructureSet.CanUsePhysicalMaterialTable);
 
             var copiedPlan = originalPlan.Course.CopyPlanSetup(originalPlan, newStructureSet, null);
+
+            // Retarget the new copy before applying changes to its shared destination structure set.
+            if (isAccelaCopy && !TryRetargetAccelaPlan(copiedPlan, targetMachineId))
+                return;
 
             if (string.IsNullOrEmpty(materialTableWarning))
             {
@@ -406,8 +482,7 @@ namespace USZ_ARTEMIS
             copiedPlan.Id = copyNames.Id;
             copiedPlan.Name = copyNames.Name;
 
-            var targetMachineId = GetSelectedMachineId();
-            if (!string.IsNullOrWhiteSpace(targetMachineId))
+            if (!isAccelaCopy && !string.IsNullOrWhiteSpace(targetMachineId))
             {
                 var eps = copiedPlan as ExternalPlanSetup;
                 if (eps == null)
@@ -453,6 +528,14 @@ namespace USZ_ARTEMIS
                 }
                 catch (Exception ex)
                 {
+                    if (isAccelaCopy)
+                    {
+                        MessageBox.Show(
+                            "Accela couch creation failed. Remove the incomplete plan or discard the current Eclipse modifications before saving.\n\n"
+                            + ex.Message,
+                            "Plan copy incomplete", MessageBoxButton.OK, MessageBoxImage.Error);
+                        return;
+                    }
                     MessageBox.Show(ex.Message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
                 }
             }
@@ -707,10 +790,6 @@ namespace USZ_ARTEMIS
             }
 
             MessageBox.Show("Success!");
-        }
-
-        private void cbMachine_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
         }
 
         private void cbStructureSets_SelectionChanged(object sender, SelectionChangedEventArgs e)

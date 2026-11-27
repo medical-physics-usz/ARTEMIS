@@ -26,6 +26,11 @@ namespace USZ_ARTEMIS.Configuration
             get { return GetValue("CouchConfiguration", ""); }
         }
 
+        public static bool AccelaPlanCopyEnabled
+        {
+            get { return bool.TryParse(GetValue("AccelaPlanCopyEnabled", ""), out bool enabled) && enabled; }
+        }
+
         public static string PublishedScriptIconPath
         {
             get { return GetValue("PublishedScriptIconPath", @"\\YOUR-SERVER\YOUR-SHARE\ARTEMIS\PublishedScripts\Images\usz32.ico"); }
@@ -63,6 +68,26 @@ namespace USZ_ARTEMIS.Configuration
         public static string RegistrationCheckExecutablePath
         {
             get { return GetValue("RegistrationCheckExecutablePath", @"\\YOUR-SERVER\YOUR-SHARE\ARTEMIS\Utilities\RegistrationCheck\RegistrationCheck.exe"); }
+        }
+
+        public static string DoseCheckExecutablePath
+        {
+            get { return GetValue("DoseCheckExecutablePath", ""); }
+        }
+
+        public static string DoseCheckWorkingDirectory
+        {
+            get { return GetValue("DoseCheckWorkingDirectory", ""); }
+        }
+
+        public static string DoseCheckPsqaExecutablePath
+        {
+            get { return GetValue("DoseCheckPsqaExecutablePath", ""); }
+        }
+
+        public static string DoseCheckPsqaWorkingDirectory
+        {
+            get { return GetValue("DoseCheckPsqaWorkingDirectory", ""); }
         }
 
         public static string PreprocessingExecutablePath

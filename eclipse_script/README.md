@@ -132,6 +132,66 @@ the information and warning dialogs on Eclipse 19.0 with each target structure
 present and absent, both Water structure IDs present, an empty target structure,
 and correct, missing, or incorrect named material overrides.
 
+## Accela QA and plan adaptation
+
+Choose `Accela1008` under **Treatment Machine** to send a calculated plan to
+DoseCHECK or perform water PSQA through DoseCHECK. Calculate and save the adapted
+plan in Eclipse and reopen ARTEMIS with that plan active before exporting. ARTEMIS
+checks the treatment beams against the selected QA workflow. The exporter also
+requires the saved Eclipse plan ID to match the RT Plan Label in the DICOM
+database.
+
+Configure `DoseCheckExecutablePath`, `DoseCheckWorkingDirectory`,
+`DoseCheckPsqaExecutablePath`, and `DoseCheckPsqaWorkingDirectory` in the local
+JSON. Deploy the executables with their existing environment configuration.
+ARTEMIS reports listener acceptance, and the final result is available in
+DoseCHECK. Water PSQA sends a derived DICOM set with a `_QW` plan label and
+uses the original Eclipse dose grid for comparison. The original label must
+leave room for that suffix within the DICOM 16-character limit.
+
+Set `AccelaPlanCopyEnabled` to `true` where the source beam configurations,
+Accela retargeting, existing IGRT couch model and configuration, and calculation
+model have been commissioned. QA of an existing Accela plan is available
+independently of this setting. On Eclipse 19.0, verify setup and treatment beam
+geometry, MLC and control-point compatibility, couch placement, and explicit
+cleanup or discard instructions on incompatible inputs.
+
+SciMoCa, standard DoseCHECK, and DoseCHECK water PSQA use the same
+`FLAG_BLOCK_SCRIPT` on the production SMB share. Drain in-flight exports and
+update or roll back the three exporters together, including the paths used by
+standalone Eclipse scripts. Validate permissions and lock handoff in separate
+Citrix sessions on one host and across hosts before clinical deployment. Use
+commissioned test cases to verify both DoseCHECK results and exercise the
+existing Edge and TrueBeam QA actions.
+
+## MLC opening metrics in plan comparison
+
+For treatment beams on `Edge2018` and `TrueBeam3232`, **Compare to original
+plan** calculates mean MLC opening (MMO) from every leaf pair, including the
+first. It averages signed gaps greater than the existing 0.01 mm closure
+tolerance across the beam's control points. Crossed leaves are closed.
+
+**Compare to original plan** reports the Small Aperture Score (SAS10) for
+each treatment beam below MMO. The score is the percentage of open MLC leaf
+pairs with a gap strictly below 10 mm. ARTEMIS pools the leaf-pair observations
+across all recorded control points in each beam, using signed bank-to-bank
+gaps from ESAPI 19.0. Each observation counts equally and the gap uses the MLC
+positions before jaw clipping.
+
+The QA panel matches treatment beams by exact ID for both MMO and SAS10. MMO
+shows the relative percentage change. SAS10 shows the difference in percentage
+points and uses informational styling for valid comparisons. Missing, ambiguous,
+or invalid beam data produces an `n/a` warning with the reason while retaining
+an available score from the other plan.
+
+SAS10 uses the Core calculator embedded by Costura. After rebuilding and
+deploying the main plugin, verify a field with hand-counted leaf gaps, including
+a 10 mm gap, and representative IMRT and VMAT comparisons in Eclipse 19.0.
+Exercise reordered and unmatched beam IDs in both metrics, including a manually
+selected base plan with fewer treatment beams. Also exercise a beam without an
+MLC. For Edge and TrueBeam, verify MMO with a hand-counted opening in the first
+leaf pair and a crossed pair that contributes nothing to the mean.
+
 ## Build
 
 Open `USZ_ARTEMIS.sln` in Visual Studio on Windows. Restore NuGet packages and
@@ -155,6 +215,13 @@ Before clinical deployment, validate on the licensed Eclipse 19.0 workstation:
   assignment failures. If cleanup or restoration fails, discard the changes.
 - Exercise plan copying, structure creation and metadata rules, clinical-goal
   evaluation, and QA/reporting against commissioned test cases.
+- Exercise **Compare to original plan** with exact and shortened ID matches.
+  Confirm each compares automatically. Use an unmatched ID in a course with
+  several plans and verify the picker offers only the other plans in that
+  course. Select a base plan and check its ID in the report. Repeat and cancel,
+  including by closing the picker, and confirm the report area clears. With
+  only one plan in the course, confirm the action explains that there are no
+  other plans to compare.
 - Verify automatic material table assignment, an already matching table, and
   warning-only continuation when the table is unavailable or assignment fails.
   Confirm `AcurosXB-13.5` is commissioned for the intended workflow and that

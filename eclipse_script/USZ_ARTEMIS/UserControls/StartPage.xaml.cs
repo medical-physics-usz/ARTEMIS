@@ -20,6 +20,7 @@ namespace USZ_ARTEMIS
             this.context = context;
             patient = context.Patient;
             this.clinicalVersion = clinicalVersion;
+            UpdateQaSendLabel();
             PopulateStructureSets();
         }
     }

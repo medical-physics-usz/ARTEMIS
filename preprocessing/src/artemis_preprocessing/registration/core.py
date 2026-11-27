@@ -2,7 +2,6 @@ import datetime
 import csv
 import math
 import os
-import socket
 import time
 from pathlib import Path
 
@@ -14,9 +13,8 @@ import pydicom
 from pydicom.dataset import Dataset, FileDataset
 from pydicom.sequence import Sequence
 from pydicom.uid import generate_uid, ExplicitVRLittleEndian
-from pydicom.errors import InvalidDicomError
 
-from artemis_preprocessing.db.connector import DBHandler
+from artemis_preprocessing.registration.base_plan import get_base_plan
 from artemis_preprocessing.utils import (
     get_datetime,
     load_environment,
@@ -153,42 +151,16 @@ def _log_registration_entry(entry):
             writer.writeheader()
         writer.writerow(entry)
 
-def get_base_plan(patient_id, rtplan_label, rtplan_uid):
-    baseplan_dir = Path(require_env('BASEPLAN_DIR'))
-    moving_dir = baseplan_dir / patient_id / rtplan_label
-    if os.path.isdir(moving_dir):
-        print(f"{get_datetime()} Base plan exists")
-
-    else:
-        print(f"{get_datetime()} Downloading the base plan")
-        dbh = DBHandler(
-            server_ip=require_env('SERVER_IP'),
-            server_port=int(require_env('SERVER_PORT')),
-            called_ae_title=require_env('SERVER_AE_TITLE'),
-            calling_ae_title=socket.gethostname(),
-            scp_port=int(require_env('SCP_PORT')))
-        dbh.export_dicom(patient_id, rtplan_label, moving_dir, to_export=("rtplan", "ct", "rtstruct"),
-                         rtplan_uid=rtplan_uid)
-
-
-def _fix_extended_ct(root_dir, tol_mm=0.1):
-    """
-    Delete CT slices where |ImagePositionPatient[2] - SliceLocation| > tol_mm.
-    Returns (num_examined, num_deleted).
-    """
-    root = Path(root_dir)
-    examined = 0
-    deleted = 0
-
-    for p in root.rglob("*"):
+def _extended_ct_slices(root_dir, tol_mm=0.1):
+    """Find CT slices where |ImagePositionPatient[2] - SliceLocation| exceeds tolerance."""
+    for p in Path(root_dir).rglob("*"):
         if not p.is_file():
             continue
         try:
             ds = pydicom.dcmread(p, stop_before_pixels=True, force=False)
-        except (InvalidDicomError, Exception):
+        except Exception:
             continue
 
-        examined += 1
         if getattr(ds, "Modality", None) != "CT":
             continue
 
@@ -204,19 +176,29 @@ def _fix_extended_ct(root_dir, tol_mm=0.1):
             continue
 
         if math.isfinite(z_ipp) and math.isfinite(z_sl) and abs(z_ipp - z_sl) > tol_mm:
+            yield p, z_ipp, z_sl
+
+
+def read_dicom_series(directory, modality="CT", series_uid=None, *, preserve_source=False):
+    excluded = set()
+    for path, z_ipp, z_sl in _extended_ct_slices(directory):
+        if preserve_source:
+            excluded.add(path.resolve())
+        else:
             try:
-                p.unlink(missing_ok=True)
-                print(f"Deleted: {p}  (IPP z={z_ipp:.6f}, SliceLocation={z_sl:.6f}, diff={abs(z_ipp - z_sl):.6f} mm)")
-                deleted += 1
+                path.unlink(missing_ok=True)
+                print(f"Deleted: {path}  (IPP z={z_ipp:.6f}, SliceLocation={z_sl:.6f}, diff={abs(z_ipp - z_sl):.6f} mm)")
             except Exception:
                 pass
-    return examined, deleted
-
-
-def read_dicom_series(directory, modality="CT", series_uid=None):
-    _fix_extended_ct(directory)
 
     reader = sitk.ImageSeriesReader()
+
+    def series_files(uid):
+        filenames = reader.GetGDCMSeriesFileNames(directory, uid)
+        if excluded:
+            return tuple(name for name in filenames if Path(name).resolve() not in excluded)
+        return filenames
+
     series_IDs = reader.GetGDCMSeriesIDs(directory)
     if not series_IDs:
         raise ValueError(f"No DICOM series found in directory: {directory}")
@@ -226,7 +208,9 @@ def read_dicom_series(directory, modality="CT", series_uid=None):
             raise ValueError(
                 f"Series UID {series_uid} not found in directory: {directory}"
             )
-        file_names = reader.GetGDCMSeriesFileNames(directory, series_uid)
+        file_names = series_files(series_uid)
+        if not file_names:
+            raise ValueError(f"No usable images found in series {series_uid}")
         reader.SetFileNames(file_names)
         image = reader.Execute()
         return image, file_names, series_uid
@@ -245,7 +229,7 @@ def read_dicom_series(directory, modality="CT", series_uid=None):
     # Try each pattern in priority order.
     for pattern in patterns:
         for series_id in series_IDs:
-            file_names = reader.GetGDCMSeriesFileNames(directory, series_id)
+            file_names = series_files(series_id)
             if not file_names:
                 continue
 
@@ -780,10 +764,13 @@ def perform_registration(current_directory, patient_id, rtplan_label,
             moving_dir,
             modality=moving_modality,
             series_uid=moving_series_uid,
+            preserve_source=True,
         )
     else:
         moving_modality = (moving_modality or "CT").upper()
-        moving_image, moving_files, used_moving_uid = read_dicom_series(moving_dir, moving_modality)
+        moving_image, moving_files, used_moving_uid = read_dicom_series(
+            moving_dir, moving_modality, preserve_source=True,
+        )
 
     # Cast & orient
     print(f"{get_datetime()} Casting and reorienting images")

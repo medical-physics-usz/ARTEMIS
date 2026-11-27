@@ -227,7 +227,7 @@ class DBHandler:
         """
         Export DICOM files for a given patient and RT Plan label.
         Depending on the 'to_export' tuple, additional objects (RTSTRUCT, CT, RTDOSE)
-        will be retrieved.
+        will be retrieved. Return the completed C-MOVE counts for imaging series.
         """
         data = self.read_patient(patient_id)
         if data.empty:
@@ -271,51 +271,56 @@ class DBHandler:
         logger.info(f"Storage SCP started on port {self.scp_port}")
 
         # Establish an association for C-MOVE operations.
-        assoc = self._acquire_association()
+        assoc = None
         try:
+            assoc = self._acquire_association()
             logger.info(f"Retrieving RT Plan: Label={rtplan_label}, UID={rtplan.rtplan_uid}")
             self._export_rtplan(assoc, rtplan)
 
             if "rtstruct" in to_export:
                 self._export_rtstruct(assoc, rtplan, output_dir)
 
-            if "ct" in to_export:
-                self._export_ct(assoc, rtplan, output_dir)
+            imaging_counts = self._export_ct(assoc, rtplan, output_dir) if "ct" in to_export else {}
 
             if "rtdose" in to_export:
                 self._export_rtdose(assoc, rtplan, output_dir, dose_summation_type="PLAN")
 
             if "rtdose_beam" in to_export:
                 self._export_rtdose(assoc, rtplan, output_dir, dose_summation_type="BEAM")
+            return imaging_counts
         except Exception as e:
             logger.error(f"Error during export: {e}")
             raise
         finally:
-            assoc.release()
-            scp.shutdown()
+            try:
+                if assoc is not None:
+                    assoc.release()
+            finally:
+                scp.shutdown()
             logger.info("Associations closed and SCP shut down.")
 
     def _send_cmove(self, assoc, query_ds, description):
-        """
-        Helper method to send a C-MOVE request and log responses.
-        """
+        """Require a successful final response and return its completed count, if present."""
         responses = assoc.send_c_move(
             query_ds,
             move_aet=self.calling_ae_title,
             query_model=PatientRootQueryRetrieveInformationModelMove,
         )
-        for status, identifier in responses:
-            if status is None:
-                logger.error(f"{description}: No status returned.")
+        for status, _ in responses:
+            code = getattr(status, "Status", None)
+            if code in (0xFF00, 0xFF01):
                 continue
-            if status.Status in (0xFF00, 0xFF01):
-                # Pending responses.
-                continue
-            elif status.Status == 0x0000:
-                logger.info(f"{description} retrieval completed successfully.")
-            else:
-                logger.warning(f"{description} retrieval failed with status 0x{status.Status:04X}")
-        return responses
+            if code is None:
+                break
+            if code != 0x0000:
+                raise RuntimeError(f"{description} retrieval failed with status 0x{code:04X}")
+            if getattr(status, "NumberOfFailedSuboperations", 0) or getattr(
+                status, "NumberOfWarningSuboperations", 0
+            ):
+                raise RuntimeError(f"{description} retrieval reported failed or warning sub-operations")
+            logger.info(f"{description} retrieval completed successfully.")
+            return getattr(status, "NumberOfCompletedSuboperations", None)
+        raise RuntimeError(f"{description} retrieval ended without a final C-MOVE status")
 
     def _export_rtplan(self, assoc, rtplan):
         """Retrieve the RT Plan from the PACS using C-MOVE."""
@@ -379,13 +384,15 @@ class DBHandler:
         else:
             logger.info("No ReferencedFrameOfReferenceSequence found in RTSTRUCT.")
 
+        imaging_counts = {}
         for series_uid in ct_series_uids:
             move_ds = Dataset()
             move_ds.QueryRetrieveLevel = "SERIES"
             move_ds.PatientID = rtplan.patient_id
             move_ds.SeriesInstanceUID = series_uid
 
-            self._send_cmove(assoc, move_ds, f"CT Series (UID: {series_uid})")
+            imaging_counts[series_uid] = self._send_cmove(assoc, move_ds, f"CT Series (UID: {series_uid})")
+        return imaging_counts
 
     def _export_rtdose(self, assoc, rtplan, output_dir, dose_summation_type="PLAN"):
         """

@@ -111,7 +111,6 @@ namespace USZ_ARTEMIS.QA
 
             if (string.IsNullOrEmpty(adaptedID) || adaptedID.Length < 2)
             {
-                System.Windows.Forms.MessageBox.Show("Adapted plan ID is invalid: " + adaptedID);
                 return null;
             }
 
@@ -152,14 +151,6 @@ namespace USZ_ARTEMIS.QA
                         break;
                     }
                 }
-            }
-
-            if (outPlan == null)
-            {
-                System.Windows.Forms.MessageBox.Show(
-                    "Original plan not found!\n" +
-                    "Adapted PlanID = " + adaptedID + "\n" +
-                    "Base adapted PlanID = " + baseAdaptedID);
             }
 
             return outPlan;

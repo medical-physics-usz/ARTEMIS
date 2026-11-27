@@ -20,6 +20,8 @@
     <Compile Include="..\USZ_ARTEMIS\DataExtraction\CouchDataExtractor.cs" Link="DataExtraction\CouchDataExtractor.cs" />
     <Compile Include="..\USZ_ARTEMIS\Tools\PlanCopyMaterialTable.cs" Link="Planning\PlanCopyMaterialTable.cs" />
     <Compile Include="..\USZ_ARTEMIS\Tools\PlanCopyStructureReminders.cs" Link="Planning\PlanCopyStructureReminders.cs" />
+    <Compile Include="..\USZ_ARTEMIS\Tools\DoseCheckLauncher.cs" Link="Launching\DoseCheckLauncher.cs" />
+    <Compile Include="..\USZ_ARTEMIS\Tools\ExternalProcessLauncher.cs" Link="Launching\ExternalProcessLauncher.cs" />
     <Compile Include="..\USZ_ARTEMIS\Tools\PreprocessingLauncher.cs" Link="Launching\PreprocessingLauncher.cs" />
   </ItemGroup>
 </Project>

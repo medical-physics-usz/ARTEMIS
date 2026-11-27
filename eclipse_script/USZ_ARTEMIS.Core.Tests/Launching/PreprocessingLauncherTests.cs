@@ -48,7 +48,7 @@ public sealed class PreprocessingLauncherTests : IDisposable
             CreateNoWindow = true
         };
 
-        Assert.Equal(exitCode, await PreprocessingLauncher.RunAsync(startInfo).WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(exitCode, await ExternalProcessLauncher.RunAsync(startInfo).WaitAsync(TimeSpan.FromSeconds(10)));
     }
 
     [Theory]

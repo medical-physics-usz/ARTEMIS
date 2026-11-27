@@ -484,20 +484,31 @@ def main():
     # Kick off the polling loop so worker threads can post results immediately.
     process_tk_queue()
 
-    # Configure grid to accommodate sent panel and console on the right
-    root.grid_columnconfigure(2, weight=0)
-    root.grid_columnconfigure(3, weight=1)
+    root.grid_columnconfigure(1, weight=1)
+    root.grid_rowconfigure(2, weight=1)
+
+    workflow_panel = tk.Frame(root)
+    workflow_panel.grid(row=2, column=0, sticky="new", padx=(10, 5), pady=(0, 10))
+
+    settings_frame = tk.LabelFrame(workflow_panel, text="Settings", padx=10, pady=5)
+    settings_frame.pack(fill="x", pady=(0, 8))
+    automation_frame = tk.LabelFrame(workflow_panel, text="Full automation", padx=10, pady=8)
+    automation_frame.pack(fill="x", pady=(0, 8))
+    manual_frame = tk.LabelFrame(workflow_panel, text="Manual workflow", padx=10, pady=8)
+    manual_frame.pack(fill="x")
+    manual_frame.grid_columnconfigure(2, weight=1)
+    fetch_actions = tk.Frame(manual_frame)
+    fetch_actions.grid(row=0, column=0, columnspan=3, sticky="w")
 
     right_panel = tk.Frame(root)
-    right_panel.grid(row=0, column=3, rowspan=25, sticky="nsew", padx=(10, 10), pady=(0, 10))
+    right_panel.grid(row=2, column=1, sticky="nsew", padx=(5, 10), pady=(0, 10))
     right_panel.grid_columnconfigure(0, weight=1)
-    right_panel.grid_rowconfigure(0, weight=2)
     right_panel.grid_rowconfigure(2, weight=1)
 
     # Console output widget
     console_label = tk.Label(right_panel, text="Console:")
     console_label.grid(row=1, column=0, sticky="w", pady=(10, 0))
-    console = ScrolledText(right_panel, state="disabled", width=140, height=18)
+    console = ScrolledText(right_panel, state="disabled", width=64, height=14)
     console.grid(row=2, column=0, sticky="nsew")
 
     # Redirect stdout and stderr to the console widget
@@ -508,33 +519,17 @@ def main():
     lbl_title = tk.Label(root, text="ARTEMIS Preprocessing", font=("Helvetica", 16))
     lbl_title.grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=10)
 
-    # Patient information displayed under the title
-    lbl_name = tk.Label(
-        root,
-        text=f"{patient_name}",
-        font=("Helvetica", 12),
-    )
-    lbl_name.grid(row=1, column=0, columnspan=2, sticky="w", padx=10)
+    patient_frame = tk.Frame(root)
+    patient_frame.grid(row=1, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
+    for value in (patient_name, patient_id, rtplan_label):
+        tk.Label(patient_frame, text=value, font=("Helvetica", 12)).pack(side="left", padx=(0, 10))
 
-    lbl_patient = tk.Label(
-        root,
-        text=f"{patient_id}",
-        font=("Helvetica", 12),
-    )
-    lbl_patient.grid(row=2, column=0, columnspan=2, sticky="w", padx=10)
-
-    lbl_rtplan = tk.Label(
-        root,
-        text=f"{rtplan_label}",
-        font=("Helvetica", 12),
-    )
-    lbl_rtplan.grid(row=3, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
-
-    # Full automation checkbox above the base plan button
-    full_automation_var = tk.BooleanVar(value=False)
     automation_state = {
         "active": False,
+        "accela_adaptation": False,
         "job": None,
+        "base_plan_in_progress": False,
+        "refresh_in_progress": False,
         "registration_attempted": False,
         "registration_completed": False,
         "registration_successful": False,
@@ -552,6 +547,31 @@ def main():
 
         print(f"{get_datetime()} [Automation] {message}")
 
+    def automation_busy() -> bool:
+        return any(
+            automation_state[step]
+            for step in (
+                "base_plan_in_progress",
+                "refresh_in_progress",
+                "registration_in_progress",
+                "sending_in_progress",
+            )
+        )
+
+    def update_automation_controls() -> None:
+        active = automation_state["active"]
+        settings_state = tk.DISABLED if active else tk.NORMAL
+        chk_auto_approve.config(state=settings_state)
+        chk_propagate_ptvs.config(state=settings_state)
+        chk_accela_adaptation.config(state=settings_state)
+        if active:
+            btn_automation.config(text="STOP", state=tk.NORMAL)
+            automation_status.config(text="Running")
+        else:
+            busy = automation_busy()
+            btn_automation.config(text="START", state=tk.DISABLED if busy else tk.NORMAL)
+            automation_status.config(text="Finishing current step…" if busy else "Stopped")
+
     def schedule_automation_next(delay_ms: int = 5_000) -> None:
         """Schedule the next automation iteration with *delay_ms* milliseconds."""
 
@@ -565,7 +585,9 @@ def main():
     def automation_after_refresh(success: bool) -> None:
         """Continue the automation workflow once imaging refresh completes."""
 
+        automation_state["refresh_in_progress"] = False
         if not automation_state["active"]:
+            update_automation_controls()
             return
 
         if not success:
@@ -585,12 +607,13 @@ def main():
             automation_log(f"Detected {len(new_imaging)} new imaging series.")
         automation_state["known_imaging_uids"].update(imaging_now)
 
-        if not automation_state["registration_attempted"]:
+        accela_adaptation = automation_state["accela_adaptation"]
+        if not accela_adaptation and not automation_state["registration_attempted"]:
             automation_log("Imaging available. Starting registration.")
             automation_state["registration_attempted"] = True
             automation_state["registration_completed"] = False
             automation_state["registration_successful"] = False
-            automation_state["registration_in_progress"] = True
+
             def automation_confirm(cost_value: float, quality_line: str) -> bool:
                 """Ask the user to accept the automated registration result."""
 
@@ -610,49 +633,34 @@ def main():
             schedule_automation_next()
             return
 
-        if not automation_state["registration_completed"]:
+        if not accela_adaptation and not automation_state["registration_completed"]:
             schedule_automation_next()
             return
 
-        unsent_imaging = (
+        selected_uids = (
             imaging_now
             - automation_state["sent_series_uids"]
             - aria_blocked_series_uids
             - aria_refresh_required_uids
         )
 
-        unavailable_imaging_uids = (
-            aria_blocked_series_uids | aria_refresh_required_uids
-        )
-        reg_uids = {
-            uid
-            for uid, info in series_info.items()
-            if info.get("modality") == "REG"
-            and not (
-                set(info.get("references", []) or [])
-                & unavailable_imaging_uids
-            )
-        }
+        if not accela_adaptation and automation_state["registration_successful"]:
+            unavailable_imaging_uids = aria_blocked_series_uids | aria_refresh_required_uids
+            reg_uids = {
+                uid
+                for uid, info in series_info.items()
+                if info.get("modality") == "REG"
+                and not (set(info.get("references", []) or []) & unavailable_imaging_uids)
+            }
+            selected_uids.update(reg_uids - automation_state["sent_series_uids"])
 
-        if automation_state["registration_successful"]:
-            unsent_regs = reg_uids - automation_state["sent_series_uids"]
-        else:
-            unsent_regs = set()
-
-        if unsent_imaging or unsent_regs:
-            selected_uids = set(unsent_imaging) | set(unsent_regs)
-            automation_log(
-                "Sending series to Aria: "
-                + ", ".join(sorted(selected_uids))
-                if selected_uids
-                else "Sending series to Aria."
-            )
+        if selected_uids:
+            automation_log("Sending series to Aria: " + ", ".join(sorted(selected_uids)))
             on_send_to_aria(
                 selected_uids=selected_uids,
                 triggered_by_automation=True,
+                include_referenced_structures=not accela_adaptation,
             )
-            schedule_automation_next()
-            return
 
         schedule_automation_next()
 
@@ -664,113 +672,150 @@ def main():
 
         automation_state["job"] = None
 
-        if (
-            automation_state["registration_in_progress"]
-            or automation_state["sending_in_progress"]
-            or imaging_refresh_in_progress
-        ):
+        if automation_busy() or imaging_refresh_in_progress:
             schedule_automation_next()
             return
 
+        automation_state["refresh_in_progress"] = True
         on_get_images(completion_callback=automation_after_refresh)
 
     def start_full_automation() -> None:
         """Reset state and kick off the automated workflow."""
 
-        if automation_state["active"]:
+        if automation_state["active"] or automation_busy():
             return
         automation_state["active"] = True
+        automation_state["accela_adaptation"] = accela_adaptation_var.get()
         automation_state["registration_attempted"] = False
         automation_state["registration_completed"] = False
         automation_state["registration_successful"] = False
-        automation_state["registration_in_progress"] = False
-        automation_state["sending_in_progress"] = False
         automation_state["pending_send_uids"] = set()
         automation_state["known_imaging_uids"] = set()
         automation_state["sent_series_uids"] = set()
+        automation_state["base_plan_in_progress"] = True
+        update_automation_controls()
         automation_log("Starting full automation workflow.")
-        on_get_base_plan()
-        automation_loop()
+        if automation_state["accela_adaptation"]:
+            automation_log("Accela adaptation enabled. Sending imaging only.")
 
-    def stop_full_automation(*, from_internal: bool = False) -> None:
-        """Cancel pending automation callbacks and clear state flags."""
+        def base_plan_finished(success: bool) -> None:
+            automation_state["base_plan_in_progress"] = False
+            if not success and not automation_state["accela_adaptation"] and automation_state["active"]:
+                automation_log("Base plan unavailable. Stopping full automation.")
+                stop_full_automation()
+                return
+            update_automation_controls()
+            automation_loop()
+
+        on_get_base_plan(completion_callback=base_plan_finished)
+
+    def stop_full_automation() -> None:
+        """Cancel polling and allow the current step to complete."""
 
         if not automation_state["active"]:
-            if from_internal and full_automation_var.get():
-                full_automation_var.set(False)
             return
         automation_state["active"] = False
         job = automation_state.get("job")
         if job is not None:
             root.after_cancel(job)
         automation_state["job"] = None
-        automation_state["registration_in_progress"] = False
-        automation_state["sending_in_progress"] = False
-        automation_state["pending_send_uids"] = set()
         automation_log("Full automation stopped.")
-        if from_internal and full_automation_var.get():
-            full_automation_var.set(False)
+        update_automation_controls()
 
     def toggle_full_automation() -> None:
-        """Enable or disable automation in response to the checkbox state."""
-
-        if full_automation_var.get():
-            start_full_automation()
-        else:
+        if automation_state["active"]:
             stop_full_automation()
+        else:
+            start_full_automation()
 
-    chk_full_automation = tk.Checkbutton(
-        root,
-        text="Full automation",
-        variable=full_automation_var,
+    btn_automation = tk.Button(
+        automation_frame,
+        text="START",
+        width=9,
+        bg="#1756a0",
+        fg="white",
+        activebackground="#134782",
+        activeforeground="white",
         command=toggle_full_automation,
     )
-    chk_full_automation.grid(row=4, column=0, sticky="w", padx=10, pady=(0, 5))
+    btn_automation.pack(side="left")
+    automation_status = tk.Label(automation_frame, text="Ready")
+    automation_status.pack(side="left", padx=(10, 0))
 
     auto_approve_var = tk.BooleanVar(value=False)
     chk_auto_approve = tk.Checkbutton(
-        root,
+        settings_frame,
         text="Automatic registration approval",
         variable=auto_approve_var,
     )
-    chk_auto_approve.grid(row=5, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 5))
+    chk_auto_approve.pack(anchor="w")
 
     propagate_ptvs_var = tk.BooleanVar(value=False)
-    tk.Checkbutton(
-        root,
+    chk_propagate_ptvs = tk.Checkbutton(
+        settings_frame,
         text="Propagate PTVs (WARP study)",
         variable=propagate_ptvs_var,
-    ).grid(row=6, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 5))
+    )
+    chk_propagate_ptvs.pack(anchor="w")
+
+    accela_adaptation_var = tk.BooleanVar(value=False)
+    chk_accela_adaptation = tk.Checkbutton(
+        settings_frame,
+        text="Accela adaptation",
+        variable=accela_adaptation_var,
+    )
+    chk_accela_adaptation.pack(anchor="w")
 
     # Get Base Plan button with status label
-    baseplan_status = tk.Label(root, text="", font=("Helvetica", 14))
+    baseplan_status = tk.Label(fetch_actions, text="", font=("Helvetica", 14))
 
-    def on_get_base_plan():
+    def on_get_base_plan(completion_callback=None):
         """Download the base plan and refresh the base series controls."""
 
         print(f"{get_datetime()} Getting the base plan...")
         start_time = time.time()
         baseplan_status.config(text="\u23F3", fg="orange")  # hourglass
         root.update_idletasks()
-        try:
-            get_base_plan(patient_id, rtplan_label, rtplan_uid)
-            # List series in the base plan directory
-            base_dir = baseplan_root / patient_id / rtplan_label
-            if base_dir.exists():
-                base_series_info.clear()
-                base_series_info.update(list_dicom_series(str(base_dir)))
-                update_bp_selection()
-            baseplan_status.config(text="\u2705", fg="green")
-            end_time = time.time()
-            print(f"{get_datetime()} Getting the base plan took {end_time - start_time:.2f} seconds")
-            print(f"{get_datetime()} DONE\n")
-        except Exception as exc:
-            baseplan_status.config(text="\u274C", fg="red")
-            print(f"{get_datetime()} Failed to get base plan: {exc}")
 
-    btn_baseplan = tk.Button(root, text="Get base plan", command=on_get_base_plan)
-    btn_baseplan.grid(row=7, column=0, sticky="w", padx=10)
-    baseplan_status.grid(row=7, column=1, sticky="w")
+        def finish(series=None, error=None):
+            if error is None:
+                if series is not None:
+                    base_series_info.clear()
+                    base_series_info.update(series)
+                    update_bp_selection()
+                baseplan_status.config(text="\u2705", fg="green")
+                print(f"{get_datetime()} Getting the base plan took {time.time() - start_time:.2f} seconds")
+                print(f"{get_datetime()} DONE\n")
+            else:
+                base_series_info.clear()
+                update_bp_selection()
+                baseplan_status.config(text="\u274C", fg="red")
+                print(f"{get_datetime()} Failed to get base plan: {error}")
+            btn_register.config(state=tk.NORMAL if error is None else tk.DISABLED)
+            if completion_callback is not None:
+                btn_baseplan.config(state=tk.NORMAL)
+                completion_callback(error is None)
+
+        def worker():
+            try:
+                get_base_plan(patient_id, rtplan_label, rtplan_uid)
+                base_dir = baseplan_root / patient_id / rtplan_label
+                series = list_dicom_series(str(base_dir)) if base_dir.exists() else None
+            except Exception as exc:
+                run_on_tk_thread(finish, error=exc)
+            else:
+                run_on_tk_thread(finish, series)
+
+        if completion_callback is None:
+            worker()
+        else:
+            btn_baseplan.config(state=tk.DISABLED)
+            btn_register.config(state=tk.DISABLED)
+            threading.Thread(target=worker, daemon=True).start()
+
+    btn_baseplan = tk.Button(fetch_actions, text="Get base plan", command=on_get_base_plan)
+    btn_baseplan.grid(row=0, column=0, sticky="w")
+    baseplan_status.grid(row=0, column=1, sticky="w", padx=(0, 8))
 
     # Store base plan series information
     base_series_info = {}
@@ -778,7 +823,7 @@ def main():
     bp_default_modality = None
 
     # Get Imaging button with status label
-    images_status = tk.Label(root, text="", font=("Helvetica", 14))
+    images_status = tk.Label(fetch_actions, text="", font=("Helvetica", 14))
     series_info = {}
     series_vars = {}
     checkbox_texts = {}
@@ -884,8 +929,7 @@ def main():
                             "Warning",
                             "DICOM files older than today were detected and they should be deleted before proceeding.",
                         )
-                        if automation_state["active"]:
-                            stop_full_automation(from_internal=True)
+                        stop_full_automation()
                     run_on_tk_thread(warn_and_stop, wait=True)
                 rename_all_dicom_files(str(input_dir))
                 if check_if_ct_present(str(input_dir)) and not ct_already_resampled(str(input_dir)):
@@ -1014,17 +1058,17 @@ def main():
 
         threading.Thread(target=worker, daemon=True).start()
 
-    btn_images = tk.Button(root, text="Get imaging", command=on_get_images)
-    btn_images.grid(row=8, column=0, sticky="w", padx=10, pady=(0, 5))
-    images_status.grid(row=8, column=1, sticky="w")
+    btn_images = tk.Button(fetch_actions, text="Get imaging", command=on_get_images)
+    btn_images.grid(row=0, column=2, sticky="w")
+    images_status.grid(row=0, column=3, sticky="w")
 
     # Imaging series frame (initially empty)
-    series_frame = tk.Frame(root)
-    series_frame.grid(row=9, column=0, columnspan=2, sticky="w", padx=10, pady=10)
+    series_frame = tk.Frame(manual_frame)
+    series_frame.grid(row=1, column=0, columnspan=3, sticky="ew", pady=6)
 
 
     # Delete selected series button
-    cleanup_status = tk.Label(root, text="", font=("Helvetica", 14))
+    cleanup_status = tk.Label(manual_frame, text="", font=("Helvetica", 14))
 
     def on_cleanup():
         cleanup_status.config(text="\u23F3", fg="orange")  # hourglass
@@ -1073,26 +1117,20 @@ def main():
 
         threading.Thread(target=worker, daemon=True).start()
 
-    btn_cleanup = tk.Button(
-        root,
-        text="Delete selected series",
-        command=on_cleanup,
-        bg="#ffbbbb",
-        activebackground="#ff9999",
-    )
-    btn_cleanup.grid(row=21, column=0, sticky="w", padx=10, pady=(50, 10))
-    cleanup_status.grid(row=21, column=1, sticky="w", pady=(50, 10))
-
     # Dropdown menu for registration series
     selected_label_var = tk.StringVar()
     selected_uid_var = tk.StringVar()
 
-    tk.Label(root, text="Select Daily Series for Registration").grid(row=12, column=0, columnspan=2, sticky="w", padx=10)
-    dropdown = tk.OptionMenu(root, selected_label_var, '')
-    dropdown.grid(row=13, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
+    tk.Label(manual_frame, text="Select daily series for registration").grid(
+        row=2, column=0, columnspan=3, sticky="w"
+    )
+    dropdown = tk.OptionMenu(manual_frame, selected_label_var, '')
+    dropdown.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(0, 8))
 
     # Register button
-    register_status = tk.Label(root, text="", font=("Helvetica", 14))
+    registration_actions = tk.Frame(manual_frame)
+    registration_actions.grid(row=4, column=0, columnspan=3, sticky="w")
+    register_status = tk.Label(registration_actions, text="", font=("Helvetica", 14))
     last_rigid_transform = None
     last_fixed_uid = None
     last_moving_uid = None
@@ -1105,6 +1143,8 @@ def main():
         root.update_idletasks()
         automation_triggered = triggered_by_automation and automation_state["active"]
         registration_was_successful = False
+        auto_approve = auto_approve_var.get()
+        automation_propagate_ptvs = propagate_ptvs_var.get() if automation_triggered else None
 
         if automation_triggered:
             automation_state["registration_in_progress"] = True
@@ -1150,14 +1190,15 @@ def main():
             elif err and not automation_triggered:
                 messagebox.showerror("Registration", f"Registration failed: {err}")
             if automation_triggered:
+                automation_state["registration_in_progress"] = False
+                automation_state["registration_completed"] = True
+                automation_state["registration_successful"] = False
                 if err:
                     automation_log(f"Registration failed: {err}")
                 elif rejected:
                     automation_log("Registration rejected. Stopping automation.")
-                    stop_full_automation(from_internal=True)
-                automation_state["registration_in_progress"] = False
-                automation_state["registration_completed"] = True
-                automation_state["registration_successful"] = False
+                    stop_full_automation()
+                update_automation_controls()
 
         def handle_registration_result(result):
             """Process the registration outcome on the Tk thread."""
@@ -1188,7 +1229,11 @@ def main():
 
             copy_process = None
             transform_path = None
-            propagate_ptvs = propagate_ptvs_var.get()
+            propagate_ptvs = (
+                automation_propagate_ptvs
+                if automation_propagate_ptvs is not None
+                else propagate_ptvs_var.get()
+            )
 
             def copy_worker():
                 try:
@@ -1293,6 +1338,7 @@ def main():
                     automation_state["registration_in_progress"] = False
                     automation_state["registration_completed"] = True
                     automation_state["registration_successful"] = registration_was_successful
+                    update_automation_controls()
                 if used_fixed_uid:
                     crop_in_progress_uids.discard(used_fixed_uid)
                     if derived_series_uid:
@@ -1339,7 +1385,7 @@ def main():
                     moving_modality=bp_modality,
                     confirm_fn=confirm_threadsafe,
                     viewer_fn=view_registration,
-                    auto_approve=auto_approve_var.get(),
+                    auto_approve=auto_approve,
                 )
             except Exception as exc:
                 run_on_tk_thread(finalize_failure, err=exc)
@@ -1350,22 +1396,22 @@ def main():
         threading.Thread(target=worker, daemon=True).start()
 
 
-    btn_register = tk.Button(root, text="Register", command=lambda: on_register())
-    btn_register.grid(row=14, column=0, sticky="w", padx=10, pady=(0, 10))
-    register_status.grid(row=14, column=1, sticky="w")
+    btn_register = tk.Button(registration_actions, text="Register", command=on_register)
+    btn_register.grid(row=0, column=0, sticky="w")
+    register_status.grid(row=0, column=1, sticky="w", padx=(0, 8))
 
-    copy_status = tk.Label(root, text="", font=("Helvetica", 14))
-    copy_status.grid(row=15, column=1, sticky="w")
+    copy_status = tk.Label(registration_actions, text="", font=("Helvetica", 14))
+    copy_status.grid(row=1, column=1, sticky="w")
 
-    send_status = tk.Label(root, text="", font=("Helvetica", 14))
-    send_progress = ttk.Progressbar(root, length=200, mode="determinate")
+    send_status = tk.Label(registration_actions, text="", font=("Helvetica", 14))
+    send_progress = ttk.Progressbar(manual_frame, length=200, mode="determinate")
     sent_panel = tk.Frame(right_panel)
     sent_label = tk.Label(sent_panel, text="Sent to Aria:")
     sent_tree = ttk.Treeview(
         sent_panel,
         columns=("series", "modality", "files", "sent_at"),
         show="headings",
-        height=10,
+        height=6,
     )
     sent_tree.heading("series", text="Series")
     sent_tree.heading("modality", text="Modality")
@@ -1376,26 +1422,24 @@ def main():
     sent_tree.column("files", width=80, anchor="e")
     sent_tree.column("sent_at", width=140, anchor="w")
 
-    def _sent_file_count(uid: str) -> int:
+    def _sent_file_count(uid: str, sent_references: dict[str, list[str]]) -> int:
         info = series_info.get(uid, {})
         count = len(info.get("files", []))
         if info.get("modality") in ("RTSTRUCT", "REG"):
             return count
-        for ref_uid in references_map.get(uid, []):
+        for ref_uid in sent_references.get(uid, []):
             ref_info = series_info.get(ref_uid, {})
             count += len(ref_info.get("files", []))
         return count
 
-    def _update_sent_list(uids: set[str]) -> None:
+    def _update_sent_list(uids: set[str], sent_references: dict[str, list[str]]) -> None:
         sent_time = get_datetime()
-        expanded_uids = set(uids)
-        for uid in list(uids):
-            expanded_uids.update(references_map.get(uid, []))
+        expanded_uids = uids.union(*sent_references.values())
         for uid in sorted(expanded_uids):
             info = series_info.get(uid, {})
             series_label = checkbox_texts.get(uid, info.get("description", uid))
             modality = info.get("modality", "")
-            file_count = _sent_file_count(uid)
+            file_count = _sent_file_count(uid, sent_references)
             sent_info[uid] = {
                 "label": series_label,
                 "modality": modality,
@@ -1408,7 +1452,12 @@ def main():
             else:
                 sent_tree.insert("", "end", iid=uid, values=values)
 
-    def on_send_to_aria(selected_uids=None, triggered_by_automation: bool = False):
+    def on_send_to_aria(
+        selected_uids=None,
+        triggered_by_automation: bool = False,
+        *,
+        include_referenced_structures: bool = True,
+    ):
         """Send selected series to Aria and track automation-related selections."""
 
         print(f"{get_datetime()} Sending to Aria {input_dir}...")
@@ -1460,11 +1509,16 @@ def main():
         if not target_set:
             return
 
+        sent_references = (
+            {uid: references_map.get(uid, []) for uid in target_set}
+            if include_referenced_structures
+            else {}
+        )
         selected_files = []
         for uid in target_set:
             info = series_info.get(uid, {})
             selected_files.extend(info.get("files", []))
-            for rs_uid in references_map.get(uid, []):
+            for rs_uid in sent_references.get(uid, []):
                 rs_info = series_info.get(rs_uid, {})
                 selected_files.extend(rs_info.get("files", []))
 
@@ -1528,7 +1582,7 @@ def main():
             end_time = time.time()
             if result.get("success"):
                 send_status.config(text="\u2705", fg="green")
-                _update_sent_list(target_set)
+                _update_sent_list(target_set, sent_references)
                 if triggered_by_automation:
                     automation_log("Files sent to Aria successfully.")
                 else:
@@ -1551,11 +1605,9 @@ def main():
                 automation_state["sending_in_progress"] = False
                 if result.get("success"):
                     pending = automation_state.get("pending_send_uids", set())
-                    automation_state["sent_series_uids"].update(pending)
-                    for uid in list(pending):
-                        for rs_uid in references_map.get(uid, []):
-                            automation_state["sent_series_uids"].add(rs_uid)
+                    automation_state["sent_series_uids"].update(pending, *sent_references.values())
                 automation_state["pending_send_uids"] = set()
+                update_automation_controls()
 
             print(f"{get_datetime()} Sending finished in {end_time - start_time:.2f} seconds")
             print(f"{get_datetime()} DONE\n")
@@ -1563,11 +1615,23 @@ def main():
 
         poll_queue()
 
-    btn_send = tk.Button(root, text="Send to Aria", command=on_send_to_aria)
-    btn_send.grid(row=17, column=0, sticky="w", padx=10, pady=(0, 10))
-    send_status.grid(row=17, column=1, sticky="w")
-    send_progress.grid(row=18, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
+    btn_send = tk.Button(registration_actions, text="Send to Aria", command=on_send_to_aria)
+    btn_send.grid(row=0, column=2, sticky="w")
+    send_status.grid(row=0, column=3, sticky="w")
+    send_progress.grid(row=5, column=0, columnspan=3, sticky="w", pady=(4, 0))
     send_progress.grid_remove()
+
+    ttk.Separator(manual_frame).grid(row=6, column=0, columnspan=3, sticky="ew", pady=8)
+    btn_cleanup = tk.Button(
+        manual_frame,
+        text="Delete selected series",
+        command=on_cleanup,
+        bg="#ffbbbb",
+        activebackground="#ff9999",
+    )
+    btn_cleanup.grid(row=7, column=0, sticky="w")
+    cleanup_status.grid(row=7, column=1, sticky="w")
+
     sent_panel.grid(row=0, column=0, sticky="nsew")
     sent_label.pack(anchor="w")
     sent_tree.pack(fill="both", expand=True)

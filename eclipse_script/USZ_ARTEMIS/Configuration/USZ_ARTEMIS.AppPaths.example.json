@@ -1,10 +1,15 @@
 {
   "CouchConfiguration": "",
+  "AccelaPlanCopyEnabled": false,
   "PublishedScriptIconPath": "\\\\YOUR-SERVER\\YOUR-SHARE\\ARTEMIS\\PublishedScripts\\Images\\usz32.ico",
   "RulesFolder": "\\\\YOUR-SERVER\\YOUR-SHARE\\ARTEMIS\\Rules\\",
   "ReportsPdfFolder": "\\\\YOUR-SERVER\\YOUR-SHARE\\ARTEMIS\\ReportsPDF\\",
   "SciMoCaExecutablePath": "\\\\YOUR-SERVER\\YOUR-SHARE\\ARTEMIS\\Utilities\\SciMoCa\\SciMoCa.exe",
   "SciMoCaWorkingDirectory": "\\\\YOUR-SERVER\\YOUR-SHARE\\ARTEMIS\\Utilities\\SciMoCa",
+  "DoseCheckExecutablePath": "\\\\YOUR-SERVER\\YOUR-SHARE\\DoseCHECK\\Send2DoseCHECK.exe",
+  "DoseCheckWorkingDirectory": "\\\\YOUR-SERVER\\YOUR-SHARE\\DoseCHECK",
+  "DoseCheckPsqaExecutablePath": "\\\\YOUR-SERVER\\YOUR-SHARE\\DoseCHECK\\USZ_sCT_PSQA_DoseCHECK.exe",
+  "DoseCheckPsqaWorkingDirectory": "\\\\YOUR-SERVER\\YOUR-SHARE\\DoseCHECK",
   "PreprocessingExecutablePath": "\\\\YOUR-SERVER\\YOUR-SHARE\\ARTEMIS\\preprocessing\\artemis_preprocessing.exe",
   "PreprocessingWorkingDirectory": "\\\\YOUR-SERVER\\YOUR-SHARE\\ARTEMIS\\preprocessing",
   "RegistrationCheckExecutablePath": "\\\\YOUR-SERVER\\YOUR-SHARE\\ARTEMIS\\Utilities\\RegistrationCheck\\RegistrationCheck.exe"

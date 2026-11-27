@@ -20,7 +20,7 @@ namespace USZ_ARTEMIS
                     AppPaths.PreprocessingWorkingDirectory,
                     context.Patient?.Id, plan?.Id, plan?.UID, Environment.UserName);
 
-                int exitCode = await PreprocessingLauncher.RunAsync(startInfo);
+                int exitCode = await ExternalProcessLauncher.RunAsync(startInfo);
                 if (exitCode != 0)
                     throw new InvalidOperationException(
                         $"Preprocessing exited with code {exitCode}. If its window did not open, verify that " +

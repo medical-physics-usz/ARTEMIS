@@ -3,13 +3,16 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
+using System.Windows.Interop;
 using System.Windows.Media;
 using USZ_ARTEMIS.Configuration;
 using USZ_ARTEMIS.Core.QA;
 using USZ_ARTEMIS.QA;
+using USZ_ARTEMIS.Tools;
 using VMS.TPS.Common.Model.API;
 
 namespace USZ_ARTEMIS
@@ -22,13 +25,33 @@ namespace USZ_ARTEMIS
 
         private void BtnComparePlans_Click(object sender, RoutedEventArgs e)
         {
+            txtOutputQA.Document.Blocks.Clear();
             PlanSetup selectedPlan = GetSelectedPlan();
-            PlanSetup originalPlan = QA.Tools.GetOriginalPlan(selectedPlan);
+            if (selectedPlan == null)
+            {
+                MessageBox.Show("Open a plan to compare.", "Compare plans",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            PlanSetup originalPlan = QA.Tools.GetOriginalPlan(selectedPlan) ?? SelectBasePlan(selectedPlan);
+            if (originalPlan == null)
+                return;
+
+            if (selectedPlan.PrimaryReferencePoint == null || originalPlan.PrimaryReferencePoint == null ||
+                selectedPlan.StructureSet == null || originalPlan.StructureSet == null)
+            {
+                MessageBox.Show(
+                    $"Both plans ({selectedPlan.Id} and {originalPlan.Id}) need a primary reference point and a structure set.",
+                    "Compare plans", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
 
             FlowDocument outputQA = new FlowDocument
             {
                 PagePadding = new Thickness(4)
             };
+            AddQaOutputLine(outputQA, $"Plan {selectedPlan.Id} compared with base plan {originalPlan.Id}");
 
             bool isDosePerFractionIdentical =
                 selectedPlan.DosePerFraction.ValueAsString.Equals(originalPlan.DosePerFraction.ValueAsString);
@@ -66,70 +89,14 @@ namespace USZ_ARTEMIS
             }
             AddQaOutputSeparator(outputQA);
 
-            List<Beam> inBeamsSelected = selectedPlan.Beams.ToList();
-            List<Beam> therapyBeamsSelected = new List<Beam>();
-            foreach (Beam beam in inBeamsSelected)
-            {
-                if (!beam.IsSetupField)
-                {
-                    therapyBeamsSelected.Add(beam);
-                }
-            }
+            List<Beam> therapyBeamsSelected = selectedPlan.Beams.Where(beam => !beam.IsSetupField).ToList();
+            List<Beam> therapyBeamsOriginal = originalPlan.Beams.Where(beam => !beam.IsSetupField).ToList();
 
-            int numberOfTherapyBeamsSelected = therapyBeamsSelected.Count;
+            var beamPairs = BeamPairing.ById(therapyBeamsSelected, therapyBeamsOriginal, beam => beam.Id).ToList();
+            AddMmoComparison(outputQA, beamPairs);
+            AddQaOutputSeparator(outputQA);
 
-            List<double> adaptedMmos = new List<double>();
-            int counterSelected = 0;
-            foreach (double mmo in MetricsCalc.MMO(selectedPlan.Beams))
-            {
-                if (counterSelected != 0 && counterSelected <= numberOfTherapyBeamsSelected)
-                {
-                    adaptedMmos.Add(mmo);
-                }
-                counterSelected++;
-            }
-
-            List<double> originalMmos = new List<double>();
-            int counterOriginal = 0;
-            foreach (double mmo in MetricsCalc.MMO(originalPlan.Beams))
-            {
-                if (counterOriginal != 0 && counterOriginal <= numberOfTherapyBeamsSelected)
-                {
-                    originalMmos.Add(mmo);
-                }
-                counterOriginal++;
-            }
-
-            int numberOfMmoPairs = Math.Min(adaptedMmos.Count, originalMmos.Count);
-            for (int i = 0; i < numberOfMmoPairs; i++)
-            {
-                double adaptedMmo = adaptedMmos[i];
-                double originalMmo = originalMmos[i];
-
-                if (Math.Abs(originalMmo) < 1e-9)
-                {
-                    AddQaStatusLine(
-                        outputQA,
-                        "MMO = " + adaptedMmo.ToString("F1") +
-                        " mm (reference " + originalMmo.ToString("F1") +
-                        " mm; n/a)",
-                        QaStatusClassifier.ForMmoChange(null));
-                }
-                else
-                {
-                    double changePerc = 100.0 * (adaptedMmo - originalMmo) / originalMmo;
-                    double displayedChangePerc =
-                        QaStatusClassifier.RoundPercentageForDisplay(changePerc, 1);
-                    string sign = displayedChangePerc >= 0 ? "+" : "";
-
-                    AddQaStatusLine(
-                        outputQA,
-                        "MMO = " + adaptedMmo.ToString("F1") +
-                        " mm (reference " + originalMmo.ToString("F1") +
-                        " mm; " + sign + displayedChangePerc.ToString("F1") + "%)",
-                        QaStatusClassifier.ForMmoChange(displayedChangePerc));
-                }
-            }
+            AddSas10Comparison(outputQA, beamPairs);
             AddQaOutputSeparator(outputQA);
 
             foreach (TargetVolumeComparison comparison in QA.Tools.GetAllTargetVolumeComparisons(selectedPlan, originalPlan))
@@ -143,19 +110,9 @@ namespace USZ_ARTEMIS
 
             double totalMuSelected = 0;
             double totalMuOriginal = 0;
-            for (int iBeam = 0; iBeam < numberOfTherapyBeamsSelected; iBeam++)
+            foreach (Beam beam in therapyBeamsSelected)
             {
-                totalMuSelected += therapyBeamsSelected[iBeam].Meterset.Value;
-            }
-
-            List<Beam> inBeamsOriginal = originalPlan.Beams.ToList();
-            List<Beam> therapyBeamsOriginal = new List<Beam>();
-            foreach (Beam beam in inBeamsOriginal)
-            {
-                if (!beam.IsSetupField)
-                {
-                    therapyBeamsOriginal.Add(beam);
-                }
+                totalMuSelected += beam.Meterset.Value;
             }
 
             int numberOfTherapyBeamsOriginal = therapyBeamsOriginal.Count;
@@ -174,6 +131,168 @@ namespace USZ_ARTEMIS
             AddQaOutputSeparator(outputQA);
 
             txtOutputQA.Document = outputQA;
+        }
+
+        private static void AddMmoComparison(FlowDocument document, IReadOnlyList<BeamPair<Beam>> beamPairs)
+        {
+            foreach (BeamPair<Beam> pair in beamPairs)
+            {
+                string selectedText = DescribeMmo(pair.Selected, out double? selectedMmo);
+                string referenceText = DescribeMmo(pair.Reference, out double? referenceMmo);
+                double? displayedChange = null;
+                string changeText = "n/a";
+                if (selectedMmo.HasValue && referenceMmo.HasValue && Math.Abs(referenceMmo.Value) >= 1e-9)
+                {
+                    double change = 100.0 * (selectedMmo.Value - referenceMmo.Value) / referenceMmo.Value;
+                    displayedChange = QaStatusClassifier.RoundPercentageForDisplay(change, 1);
+                    string sign = displayedChange.Value >= 0 ? "+" : "";
+                    changeText = $"{sign}{displayedChange:F1}%";
+                }
+
+                AddQaStatusLine(document,
+                    $"MMO {pair.Id} = {selectedText} (reference {referenceText}; {changeText})",
+                    QaStatusClassifier.ForMmoChange(displayedChange));
+            }
+        }
+
+        private static string DescribeMmo(IReadOnlyList<Beam> beamsWithSameId, out double? mmo)
+        {
+            mmo = null;
+            string unavailable = DescribeUnavailableBeam(beamsWithSameId.Count);
+            if (unavailable != null)
+                return unavailable;
+
+            double opening = MetricsCalc.GetMeanMlcOpening(beamsWithSameId[0]);
+            if (double.IsNaN(opening) || double.IsInfinity(opening))
+                return "n/a (unavailable MLC opening)";
+
+            mmo = opening;
+            return $"{opening:F1} mm";
+        }
+
+        private static void AddSas10Comparison(FlowDocument document, IReadOnlyList<BeamPair<Beam>> beamPairs)
+        {
+            if (beamPairs.Count == 0)
+            {
+                AddQaStatusLine(document, "SAS10 = n/a (no treatment beams)", QaStatus.Warning);
+                return;
+            }
+
+            foreach (BeamPair<Beam> pair in beamPairs)
+            {
+                string selectedText = DescribeSas10(pair.Selected, out double? selectedPercentage);
+                string originalText = DescribeSas10(pair.Reference, out double? originalPercentage);
+                string line = $"SAS10 {pair.Id} = {selectedText} (reference {originalText}";
+                if (selectedPercentage.HasValue && originalPercentage.HasValue)
+                {
+                    double change = QaStatusClassifier.RoundPercentageForDisplay(
+                        selectedPercentage.Value - originalPercentage.Value, 1);
+                    AddQaOutputLine(document, $"{line}; {change:+0.0;-0.0;0.0} pp)");
+                }
+                else
+                {
+                    AddQaStatusLine(document, line + ")", QaStatus.Warning);
+                }
+            }
+        }
+
+        private static string DescribeUnavailableBeam(int count)
+        {
+            if (count == 0)
+                return "n/a (beam ID absent)";
+            if (count > 1)
+                return "n/a (duplicate beam ID)";
+            return null;
+        }
+
+        private static string DescribeSas10(IReadOnlyList<Beam> beamsWithSameId, out double? percentage)
+        {
+            percentage = null;
+            string unavailable = DescribeUnavailableBeam(beamsWithSameId.Count);
+            if (unavailable != null)
+                return unavailable;
+
+            SmallApertureScoreResult score = SmallApertureScore.Calculate(
+                beamsWithSameId[0].ControlPoints.Select(controlPoint => controlPoint.LeafPositions));
+            percentage = score.Percentage;
+            switch (score.Status)
+            {
+                case SmallApertureScoreStatus.Available:
+                    return $"{percentage:F1}%";
+                case SmallApertureScoreStatus.NoMlc:
+                    return "n/a (no MLC)";
+                case SmallApertureScoreStatus.NoControlPoints:
+                    return "n/a (no control points)";
+                case SmallApertureScoreStatus.NoOpenLeafPairs:
+                    return "n/a (no open MLC leaf pairs)";
+                default:
+                    return "n/a (invalid MLC leaf positions)";
+            }
+        }
+
+        private PlanSetup SelectBasePlan(PlanSetup selectedPlan)
+        {
+            Course course = selectedPlan.Course;
+            var candidates = course.PlanSetups
+                .Where(plan => !string.Equals(plan.Id, selectedPlan.Id, StringComparison.Ordinal))
+                .OrderBy(plan => plan.Id, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (candidates.Count == 0)
+            {
+                MessageBox.Show($"Course {course.Id} has no other plans to compare with {selectedPlan.Id}.",
+                    "Select base plan", MessageBoxButton.OK, MessageBoxImage.Information);
+                return null;
+            }
+
+            var owner = ResolveShownOwnerWindow();
+            if (owner != null)
+                new WindowInteropHelper(owner).EnsureHandle();
+
+            var dialog = new Window
+            {
+                Title = "Select base plan",
+                Owner = owner,
+                WindowStartupLocation = owner == null ? WindowStartupLocation.CenterScreen : WindowStartupLocation.CenterOwner,
+                ShowInTaskbar = false,
+                Width = 420,
+                Height = 340,
+                MinWidth = 340,
+                MinHeight = 260
+            };
+            var prompt = new TextBlock
+            {
+                Text = $"No original plan was found automatically for {selectedPlan.Id}. " +
+                       $"Select a base plan from course {course.Id}.",
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 8)
+            };
+            var plans = new ListBox { ItemsSource = candidates, DisplayMemberPath = nameof(PlanSetup.Id) };
+            var compare = new Button { Content = "Compare", MinWidth = 80, IsDefault = true, IsEnabled = false };
+            plans.SelectionChanged += (sender, args) => compare.IsEnabled = plans.SelectedItem != null;
+            compare.Click += (sender, args) => dialog.DialogResult = true;
+
+            var buttons = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Margin = new Thickness(0, 8, 0, 0)
+            };
+            buttons.Children.Add(compare);
+            buttons.Children.Add(new Button
+            {
+                Content = "Cancel", MinWidth = 80, IsCancel = true, Margin = new Thickness(8, 0, 0, 0)
+            });
+
+            var content = new DockPanel { Margin = new Thickness(12) };
+            DockPanel.SetDock(prompt, Dock.Top);
+            DockPanel.SetDock(buttons, Dock.Bottom);
+            content.Children.Add(prompt);
+            content.Children.Add(buttons);
+            content.Children.Add(plans);
+            dialog.Content = content;
+
+            return dialog.ShowDialog() == true ? (PlanSetup)plans.SelectedItem : null;
         }
 
         private static void AddQaStatusLine(FlowDocument document, string text, QaStatus status)
@@ -210,7 +329,7 @@ namespace USZ_ARTEMIS
 
         private static void AddQaOutputSeparator(FlowDocument document)
         {
-            AddQaOutputLine(document, "________________________________");
+            AddQaOutputLine(document, "________________");
             document.Blocks.Add(new Paragraph
             {
                 Margin = new Thickness(0),
@@ -218,7 +337,35 @@ namespace USZ_ARTEMIS
             });
         }
 
-        private void BtnPerformQA_Click(object sender, RoutedEventArgs e)
+        private void CbMachine_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            UpdateQaSendLabel();
+        }
+
+        private void UpdateQaSendLabel()
+        {
+            // SelectionChanged can fire before the QA buttons are created by XAML.
+            if (btnSendPlan != null)
+                btnSendPlan.Content = DoseCheckLauncher.IsAccelaMachine(GetSelectedMachineId())
+                    ? "Send to DoseCHECK"
+                    : "Send to SciMoCa";
+        }
+
+        private async void BtnPerformQA_Click(object sender, RoutedEventArgs e)
+        {
+            if (!TryGetQaPlan(out PlanSetup plan, out bool useDoseCheck))
+                return;
+
+            if (useDoseCheck)
+            {
+                await RunDoseCheckAsync(plan, waterPsqa: true);
+                return;
+            }
+
+            PerformEclipseWaterQa();
+        }
+
+        private void PerformEclipseWaterQa()
         {
             Course qaCourse = Tools.Actions.CreateQaCourse(context, GetSelectedCourse());
             qaCourse.CopyPlanSetup(GetSelectedPlan());
@@ -237,15 +384,87 @@ namespace USZ_ARTEMIS
             SyntheticCT.CreatePDF(context, GetSelectedPlan(), qaPlanWater);
         }
 
-        private void BtnSendToSciMoCa_Click(object sender, RoutedEventArgs e)
+        private async void BtnSendPlan_Click(object sender, RoutedEventArgs e)
         {
-            string patientId = context.Patient.Id;
-            string planSetupId = context.PlanSetup.Id;
-            string planSetupUID = context.PlanSetup.UID;
-            string planDoseUID = context.PlanSetup.Dose.UID;
-            string username = Environment.UserName;
+            if (!TryGetQaPlan(out PlanSetup plan, out bool useDoseCheck))
+                return;
 
-            Scimoca.SendToScimoca(patientId, planSetupId, planSetupUID, planDoseUID, username);
+            if (useDoseCheck)
+            {
+                await RunDoseCheckAsync(plan, waterPsqa: false);
+                return;
+            }
+
+            try
+            {
+                if (!plan.IsDoseValid || string.IsNullOrWhiteSpace(plan.Dose?.UID))
+                    throw new InvalidOperationException("Calculate the dose of the open plan before sending it.");
+
+                Scimoca.SendToScimoca(context.Patient.Id, plan.Id, plan.UID, plan.Dose.UID, Environment.UserName);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message, "Send to SciMoCa", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private bool TryGetQaPlan(out PlanSetup plan, out bool useDoseCheck)
+        {
+            plan = GetSelectedPlan();
+            useDoseCheck = false;
+            try
+            {
+                if (plan == null || context.Patient == null)
+                    throw new InvalidOperationException("Open the treatment plan in Eclipse before running QA.");
+
+                useDoseCheck = DoseCheckLauncher.UseDoseCheck(GetSelectedMachineId(), plan.Beams
+                    .Where(beam => !beam.IsSetupField)
+                    .Select(beam => beam.TreatmentUnit?.Id));
+                return true;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message, "Treatment Machine", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return false;
+            }
+        }
+
+        private async Task RunDoseCheckAsync(PlanSetup plan, bool waterPsqa)
+        {
+            string title = waterPsqa ? "DoseCHECK water PSQA" : "Send to DoseCHECK";
+            string executable = waterPsqa ? AppPaths.DoseCheckPsqaExecutablePath : AppPaths.DoseCheckExecutablePath;
+            string workingDirectory = waterPsqa ? AppPaths.DoseCheckPsqaWorkingDirectory : AppPaths.DoseCheckWorkingDirectory;
+            btnSendPlan.IsEnabled = false;
+            btnPerformQA.IsEnabled = false;
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(AppPaths.ConfigurationLoadError))
+                    throw new InvalidOperationException(AppPaths.ConfigurationLoadError);
+                if (!plan.IsDoseValid)
+                    throw new InvalidOperationException("Calculate and save the dose of the open plan before exporting it.");
+
+                var startInfo = DoseCheckLauncher.CreateStartInfo(executable, workingDirectory,
+                    context.Patient.Id, plan.Id, plan.UID, plan.Dose?.UID, Environment.UserName, waterPsqa);
+                int exitCode = await ExternalProcessLauncher.RunAsync(startInfo);
+                if (exitCode != 0)
+                    throw new InvalidOperationException(
+                        $"The exporter exited with code {exitCode}. Verify that the plan and dose were saved in Eclipse.\n" +
+                        $"Review the exporter log in {Path.Combine(Path.GetDirectoryName(executable), "logs")} " +
+                        "and check DoseCHECK for partial delivery before retrying.");
+
+                MessageBox.Show(
+                    "The DoseCHECK DICOM listener accepted the export. Check DoseCHECK for the result.",
+                    title, MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message, title, MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            finally
+            {
+                btnSendPlan.IsEnabled = true;
+                btnPerformQA.IsEnabled = true;
+            }
         }
 
         private void BtnPerformRegCheck_Click(object sender, RoutedEventArgs e)
